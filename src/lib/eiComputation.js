@@ -207,6 +207,43 @@ export async function fetchAllPlayersSeasonAverages(playerNames, onProgress) {
   return allSeasonData;
 }
 
+export async function fetchSeasonData(season, onProgress) {
+  let allRows = [];
+  const pageSize = 1000;
+  let offset = 0;
+
+  while (true) {
+    const { data, error } = await supabase
+      .from(TABLE_NAME)
+      .select(FETCH_COLS)
+      .eq("season", season)
+      .range(offset, offset + pageSize - 1);
+
+    if (error) throw error;
+    const rows = data || [];
+    allRows = allRows.concat(rows);
+    if (rows.length < pageSize) break;
+    offset += pageSize;
+  }
+
+  if (onProgress) onProgress(allRows.length);
+
+  const playerMap = {};
+  for (const row of allRows) {
+    if (!playerMap[row.player_name]) playerMap[row.player_name] = [];
+    playerMap[row.player_name].push(row);
+  }
+
+  const seasonData = [];
+  for (const [name, rows] of Object.entries(playerMap)) {
+    const measures = computeSeasonMeasures(name, rows);
+    seasonData.push(...measures);
+  }
+
+  return seasonData;
+}
+
+
 // ─── Season Measure Computation ──────────────────────────────────────────────
 
 function computeSeasonMeasures(playerName, rows) {

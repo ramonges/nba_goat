@@ -4,6 +4,7 @@ import Home from "./pages/Home";
 import StatsComparison from "./pages/StatsComparison";
 import MetricsComparison from "./pages/MetricsComparison";
 import DiscoverGoat from "./pages/DiscoverGoat";
+import WembyIndicator from "./pages/WembyIndicator";
 
 export default function App() {
   return (
@@ -14,6 +15,7 @@ export default function App() {
         <Route path="/stats-comparison" element={<StatsComparison />} />
         <Route path="/metrics-comparison" element={<MetricsComparison />} />
         <Route path="/discover-goat" element={<DiscoverGoat />} />
+        <Route path="/wemby-indicator" element={<WembyIndicator />} />
       </Routes>
     </BrowserRouter>
   );

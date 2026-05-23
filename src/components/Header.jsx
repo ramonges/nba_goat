@@ -5,6 +5,7 @@ const NAV_ITEMS = [
   { path: "/stats-comparison", label: "Stats Distribution Comparison" },
   { path: "/metrics-comparison", label: "NBA Metrics Player Comparison" },
   { path: "/discover-goat", label: "Discover the GOAT" },
+  { path: "/wemby-indicator", label: "Wemby Indicator" },
 ];
 
 export default function Header() {
