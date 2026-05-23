@@ -3,6 +3,8 @@ import "./Header.css";
 
 const NAV_ITEMS = [
   { path: "/stats-comparison", label: "Stats Distribution Comparison" },
+  { path: "/metrics-comparison", label: "NBA Metrics Player Comparison" },
+  { path: "/discover-goat", label: "Discover the GOAT" },
 ];
 
 export default function Header() {

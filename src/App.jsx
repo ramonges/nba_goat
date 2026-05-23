@@ -2,6 +2,8 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import Header from "./components/Header";
 import Home from "./pages/Home";
 import StatsComparison from "./pages/StatsComparison";
+import MetricsComparison from "./pages/MetricsComparison";
+import DiscoverGoat from "./pages/DiscoverGoat";
 
 export default function App() {
   return (
@@ -10,6 +12,8 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/stats-comparison" element={<StatsComparison />} />
+        <Route path="/metrics-comparison" element={<MetricsComparison />} />
+        <Route path="/discover-goat" element={<DiscoverGoat />} />
       </Routes>
     </BrowserRouter>
   );
