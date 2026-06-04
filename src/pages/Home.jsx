@@ -15,8 +15,8 @@ export default function Home() {
           <br />
           Compare careers, seasons, and performance under pressure.
         </p>
-        <Link to="/stats-comparison" className="hero-cta">
-          Open Comparison Tool
+        <Link to="/discover-goat" className="hero-cta">
+          Discover the GOAT of the NBA
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
             <path
               d="M3 8h10m0 0L9 4m4 4L9 12"
@@ -107,15 +107,16 @@ export default function Home() {
             </span>
           </Link>
 
-          <Link to="/wemby-indicator" className="tool-card">
+          <Link to="/create-goat-ranking" className="tool-card">
             <div className="tool-card-header">
               <div className="tool-indicator" />
               <span className="tool-badge">New</span>
             </div>
-            <h3>Wemby Indicator</h3>
+            <h3>Create Your Own GOAT Ranking</h3>
             <p>
-              Simulate what a player needs next season to reach a target
-              ranking. See the gap per category and what stats to improve.
+              Build your own categories from scratch, drag sub-categories
+              between them, and watch the ranking update live with your
+              personal framework.
             </p>
             <span className="tool-link">
               Open
