@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useEffect } from "react";
+import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import Select from "react-select";
 import Plotly from "plotly.js-dist-min";
 import factoryModule from "react-plotly.js/factory";
@@ -6,13 +6,12 @@ import { ALL_PLAYERS } from "../lib/players";
 import {
   CATEGORY_GROUPS,
   CATEGORIES,
-  DEFAULT_CATEGORY_WEIGHTS,
-  DEFAULT_SUBCATEGORY_WEIGHTS,
   MIN_GAMES_ALL_PLAYERS,
   fetchAllPlayersSeasonAverages,
   computeEIScoresHierarchical,
 } from "../lib/eiComputation";
 import "./DiscoverGoat.css";
+import "./CreateGoatRanking.css";
 
 const createPlotlyComponent = factoryModule.default || factoryModule;
 const Plot = createPlotlyComponent(Plotly);
@@ -82,56 +81,257 @@ const selectStyles = {
   }),
 };
 
-export default function DiscoverGoat() {
+// All sub-category names that exist in the library, used as the master pool.
+const ALL_SUBCATEGORIES = Object.keys(CATEGORIES);
+
+// Build initial user state from the library defaults.
+function initialGroupsState() {
+  const groups = {};
+  for (const [cat, subs] of Object.entries(CATEGORY_GROUPS)) {
+    groups[cat] = [...subs];
+  }
+  return groups;
+}
+
+function initialCategoryOrder() {
+  return Object.keys(CATEGORY_GROUPS);
+}
+
+function initialCategoryWeights() {
+  const cats = Object.keys(CATEGORY_GROUPS);
+  const w = {};
+  for (const c of cats) w[c] = 1.0;
+  return w;
+}
+
+function initialSubCategoryWeights() {
+  const w = {};
+  for (const subs of Object.values(CATEGORY_GROUPS)) {
+    for (const s of subs) w[s] = 1.0;
+  }
+  return w;
+}
+
+export default function CreateGoatRanking() {
   const [playerMode, setPlayerMode] = useState("all");
   const [selectedPlayers, setSelectedPlayers] = useState([]);
-  // Top-level category weights (Volume, Rebounding, ...). Normalized to sum to 1.
-  const [categoryWeights, setCategoryWeights] = useState(() => ({
-    ...DEFAULT_CATEGORY_WEIGHTS,
-  }));
-  // Sub-category weights within each category (relative).
-  const [subCategoryWeights, setSubCategoryWeights] = useState(() => ({
-    ...DEFAULT_SUBCATEGORY_WEIGHTS,
-  }));
   const [topYears, setTopYears] = useState(TOP_YEARS_OPTIONS[0]);
+
+  // ── User-built category tree ────────────────────────────────────────────
+  const [userGroups, setUserGroups] = useState(initialGroupsState);
+  const [categoryOrder, setCategoryOrder] = useState(initialCategoryOrder);
+  const [categoryWeights, setCategoryWeights] = useState(initialCategoryWeights);
+  const [subCategoryWeights, setSubCategoryWeights] = useState(
+    initialSubCategoryWeights
+  );
+  const [newCategoryName, setNewCategoryName] = useState("");
+  // Draft buffer for category-name inputs. Without this we'd mutate
+  // `categoryOrder` (and therefore React keys) on every keystroke, causing the
+  // input to remount and lose focus after each typed character.
+  const [nameDrafts, setNameDrafts] = useState({});
+  // Active drag state — used purely for visual affordance on drop targets.
+  const dragInfo = useRef(null);
+  const [dragTarget, setDragTarget] = useState(null);
 
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState("");
   const [error, setError] = useState(null);
-
   const [seasonData, setSeasonData] = useState(null);
   const [results, setResults] = useState(null);
   const [playerCard, setPlayerCard] = useState(null);
 
-  const handleCategoryWeightChange = useCallback((category, value) => {
-    setCategoryWeights((prev) => ({ ...prev, [category]: value }));
+  // ── Category / sub-category mutations ───────────────────────────────────
+  const addCategory = useCallback(() => {
+    const raw = newCategoryName.trim();
+    if (!raw) return;
+    if (categoryOrder.includes(raw)) {
+      setError(`A category named "${raw}" already exists.`);
+      return;
+    }
+    setUserGroups((prev) => ({ ...prev, [raw]: [] }));
+    setCategoryOrder((prev) => [...prev, raw]);
+    setCategoryWeights((prev) => ({ ...prev, [raw]: 0 }));
+    setNewCategoryName("");
+    setError(null);
+  }, [newCategoryName, categoryOrder]);
+
+  const removeCategory = useCallback(
+    (catName) => {
+      setUserGroups((prev) => {
+        const next = { ...prev };
+        const moved = next[catName] || [];
+        delete next[catName];
+        // Re-home the sub-categories into the first remaining category, if any,
+        // so they aren't silently dropped.
+        const remaining = categoryOrder.filter((c) => c !== catName);
+        if (moved.length > 0 && remaining.length > 0) {
+          const fallback = remaining[0];
+          next[fallback] = [...(next[fallback] || []), ...moved];
+        }
+        return next;
+      });
+      setCategoryOrder((prev) => prev.filter((c) => c !== catName));
+      setCategoryWeights((prev) => {
+        const next = { ...prev };
+        delete next[catName];
+        return next;
+      });
+    },
+    [categoryOrder]
+  );
+
+  const renameCategory = useCallback(
+    (oldName, newName) => {
+      const trimmed = newName.trim();
+      if (!trimmed || trimmed === oldName) return;
+      if (categoryOrder.includes(trimmed)) {
+        setError(`A category named "${trimmed}" already exists.`);
+        return;
+      }
+      setUserGroups((prev) => {
+        const next = {};
+        for (const k of Object.keys(prev)) {
+          next[k === oldName ? trimmed : k] = prev[k];
+        }
+        return next;
+      });
+      setCategoryOrder((prev) =>
+        prev.map((c) => (c === oldName ? trimmed : c))
+      );
+      setCategoryWeights((prev) => {
+        const next = { ...prev };
+        if (oldName in next) {
+          next[trimmed] = next[oldName];
+          delete next[oldName];
+        }
+        return next;
+      });
+      setError(null);
+    },
+    [categoryOrder]
+  );
+
+  const handleNameDraftChange = useCallback((cat, value) => {
+    setNameDrafts((prev) => ({ ...prev, [cat]: value }));
   }, []);
 
-  const handleSubCategoryWeightChange = useCallback((subCategory, value) => {
-    setSubCategoryWeights((prev) => ({ ...prev, [subCategory]: value }));
+  const commitNameDraft = useCallback(
+    (cat) => {
+      setNameDrafts((prev) => {
+        if (!(cat in prev)) return prev;
+        const draft = prev[cat];
+        const next = { ...prev };
+        delete next[cat];
+        const trimmed = (draft ?? "").trim();
+        if (trimmed && trimmed !== cat) {
+          // Defer so the React state update for the input value happens first.
+          queueMicrotask(() => renameCategory(cat, trimmed));
+        }
+        return next;
+      });
+    },
+    [renameCategory]
+  );
+
+  const cancelNameDraft = useCallback((cat) => {
+    setNameDrafts((prev) => {
+      if (!(cat in prev)) return prev;
+      const next = { ...prev };
+      delete next[cat];
+      return next;
+    });
   }, []);
 
-  // Category weights normalized to sum to 1.
+  const moveSubCategory = useCallback((subCat, fromCat, toCat) => {
+    if (!fromCat || !toCat || fromCat === toCat) return;
+    setUserGroups((prev) => {
+      const next = { ...prev };
+      next[fromCat] = (next[fromCat] || []).filter((s) => s !== subCat);
+      // Avoid duplicates if the user drops the same sub-cat repeatedly.
+      const dest = (next[toCat] || []).filter((s) => s !== subCat);
+      next[toCat] = [...dest, subCat];
+      return next;
+    });
+  }, []);
+
+  const handleCategoryWeightChange = useCallback((catName, value) => {
+    setCategoryWeights((prev) => ({ ...prev, [catName]: value }));
+  }, []);
+
+  const handleSubCategoryWeightChange = useCallback((subCat, value) => {
+    setSubCategoryWeights((prev) => ({ ...prev, [subCat]: value }));
+  }, []);
+
+  const resetToDefaults = useCallback(() => {
+    setUserGroups(initialGroupsState());
+    setCategoryOrder(initialCategoryOrder());
+    setCategoryWeights(initialCategoryWeights());
+    setSubCategoryWeights(initialSubCategoryWeights());
+    setError(null);
+  }, []);
+
+  // ── Drag handlers ───────────────────────────────────────────────────────
+  const onDragStart = useCallback((e, subCat, fromCat) => {
+    dragInfo.current = { subCat, fromCat };
+    e.dataTransfer.effectAllowed = "move";
+    try {
+      e.dataTransfer.setData("text/plain", subCat);
+    } catch {
+      /* ignore — some browsers throw on certain MIME types */
+    }
+  }, []);
+
+  const onDragEnd = useCallback(() => {
+    dragInfo.current = null;
+    setDragTarget(null);
+  }, []);
+
+  const onDragOver = useCallback((e, toCat) => {
+    if (!dragInfo.current) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    if (dragTarget !== toCat) setDragTarget(toCat);
+  }, [dragTarget]);
+
+  const onDragLeave = useCallback((e, toCat) => {
+    // Only clear when leaving the zone for a non-child element.
+    if (e.currentTarget.contains(e.relatedTarget)) return;
+    if (dragTarget === toCat) setDragTarget(null);
+  }, [dragTarget]);
+
+  const onDrop = useCallback(
+    (e, toCat) => {
+      e.preventDefault();
+      const info = dragInfo.current;
+      dragInfo.current = null;
+      setDragTarget(null);
+      if (!info) return;
+      moveSubCategory(info.subCat, info.fromCat, toCat);
+    },
+    [moveSubCategory]
+  );
+
+  // ── Normalized weights for computation & display ────────────────────────
   const normalizedCategoryWeights = useMemo(() => {
-    const entries = Object.entries(categoryWeights);
-    const total = entries.reduce((s, [, v]) => s + (v || 0), 0);
+    const entries = categoryOrder.map((c) => [c, categoryWeights[c] || 0]);
+    const total = entries.reduce((s, [, v]) => s + v, 0);
     if (total <= 0) {
-      const n = entries.length;
+      const n = entries.length || 1;
       return Object.fromEntries(entries.map(([k]) => [k, 1 / n]));
     }
-    return Object.fromEntries(entries.map(([k, v]) => [k, (v || 0) / total]));
-  }, [categoryWeights]);
+    return Object.fromEntries(entries.map(([k, v]) => [k, v / total]));
+  }, [categoryOrder, categoryWeights]);
 
-  // Sub-category weights normalized to sum to 1 within each parent category.
   const normalizedSubCategoryWeights = useMemo(() => {
     const result = {};
-    for (const [, subs] of Object.entries(CATEGORY_GROUPS)) {
+    for (const cat of categoryOrder) {
+      const subs = userGroups[cat] || [];
       const total = subs.reduce(
         (s, sub) => s + (subCategoryWeights[sub] || 0),
         0
       );
       if (total <= 0) {
-        const n = subs.length;
+        const n = subs.length || 1;
         for (const sub of subs) result[sub] = 1 / n;
       } else {
         for (const sub of subs) {
@@ -140,26 +340,23 @@ export default function DiscoverGoat() {
       }
     }
     return result;
-  }, [subCategoryWeights]);
+  }, [categoryOrder, userGroups, subCategoryWeights]);
 
-  // Fetch data from Supabase (only when players/selection changes)
+  // ── Data fetch ──────────────────────────────────────────────────────────
   const handleFetchData = useCallback(async () => {
     const players =
       playerMode === "all"
         ? ALL_PLAYERS
         : selectedPlayers.map((p) => p.value);
-
     if (players.length === 0) {
       setError("Please select at least one player.");
       return;
     }
-
     setLoading(true);
     setError(null);
     setResults(null);
     setSeasonData(null);
     setPlayerCard(null);
-
     try {
       const data = await fetchAllPlayersSeasonAverages(
         players,
@@ -176,23 +373,29 @@ export default function DiscoverGoat() {
     }
   }, [playerMode, selectedPlayers]);
 
-  // Recompute EI scores whenever weights, topYears, or seasonData changes
+  // ── Live recompute on every state change ────────────────────────────────
   useEffect(() => {
     if (!seasonData || seasonData.length === 0) return;
-    // In "all players" mode, drop fringe players (e.g. role players on a
-    // recent title roster with <2 seasons) so they don't artificially top
-    // Championship-heavy rankings. Custom selections respect the user.
+    // Build the user's category tree in display order; only include
+    // categories that actually contain at least one sub-category.
+    const groups = {};
+    for (const c of categoryOrder) {
+      const subs = userGroups[c] || [];
+      if (subs.length > 0) groups[c] = subs;
+    }
     const minGames = playerMode === "all" ? MIN_GAMES_ALL_PLAYERS : 0;
     const eiResults = computeEIScoresHierarchical(
       seasonData,
       normalizedCategoryWeights,
       normalizedSubCategoryWeights,
       topYears.value,
-      { minGames }
+      { minGames, categoryGroups: groups }
     );
     setResults(eiResults);
   }, [
     seasonData,
+    categoryOrder,
+    userGroups,
     normalizedCategoryWeights,
     normalizedSubCategoryWeights,
     topYears,
@@ -204,14 +407,23 @@ export default function DiscoverGoat() {
     return results.playerRankings.slice(0, 15);
   }, [results]);
 
+  // Track which sub-categories aren't in any user category so we can warn.
+  const unassignedSubs = useMemo(() => {
+    const placed = new Set();
+    for (const subs of Object.values(userGroups)) {
+      for (const s of subs) placed.add(s);
+    }
+    return ALL_SUBCATEGORIES.filter((s) => !placed.has(s));
+  }, [userGroups]);
+
   return (
     <div className="goat-page">
       <div className="controls-panel">
-        <h2 className="controls-title">Discover the GOAT of the NBA</h2>
+        <h2 className="controls-title">Create Your Own NBA GOAT Ranking</h2>
         <p className="controls-description">
-          Configure category weights, pick the player pool, and choose how many
-          top seasons to evaluate. The Excellence Index (EI) updates the ranking
-          live — lower is better.
+          Build your own categories and drag the available sub-categories into
+          them. Category weights and sub-category weights are each normalized
+          to sum to 1. Lower EI = better.
         </p>
 
         <div className="goat-controls-layout">
@@ -241,6 +453,10 @@ export default function DiscoverGoat() {
                   placeholder="Search and select players..."
                   styles={selectStyles}
                   closeMenuOnSelect={false}
+                  menuPortalTarget={
+                    typeof document !== "undefined" ? document.body : null
+                  }
+                  menuPlacement="auto"
                   filterOption={(option, input) =>
                     option.label.toLowerCase().includes(input.toLowerCase())
                   }
@@ -255,76 +471,174 @@ export default function DiscoverGoat() {
                 value={topYears}
                 onChange={setTopYears}
                 styles={selectStyles}
+                menuPortalTarget={
+                  typeof document !== "undefined" ? document.body : null
+                }
+                menuPlacement="auto"
               />
+              <span className="control-hint">
+                Choose all careers or among the best years of players for
+                comparisons.
+              </span>
+            </div>
+
+            <div className="control-group">
+              <label className="control-label">Your Categories</label>
+              <div className="builder-actions">
+                <input
+                  className="builder-name-input"
+                  type="text"
+                  placeholder="New category name…"
+                  value={newCategoryName}
+                  onChange={(e) => setNewCategoryName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addCategory();
+                    }
+                  }}
+                />
+                <button
+                  className="builder-btn builder-btn--primary"
+                  onClick={addCategory}
+                  disabled={!newCategoryName.trim()}
+                >
+                  + Add
+                </button>
+                <button
+                  className="builder-btn builder-btn--ghost"
+                  onClick={resetToDefaults}
+                  title="Reset to the default category tree"
+                >
+                  Reset
+                </button>
+              </div>
+              {unassignedSubs.length > 0 && (
+                <div className="builder-warning">
+                  {unassignedSubs.length} sub-categor
+                  {unassignedSubs.length === 1 ? "y" : "ies"} not assigned —
+                  they won&rsquo;t contribute to EI.
+                </div>
+              )}
             </div>
           </div>
 
           <div className="goat-right-controls">
             <div className="weights-header">
-              <label className="control-label">Category Weights</label>
+              <label className="control-label">Category Builder</label>
               <span className="weights-hint-inline">
-                Category weights sum to 1 · sub-category weights sum to 1
-                within each category
+                Drag a sub-category card onto another category to move it.
+                Category weights sum to 1 · sub-categories sum to 1 within
+                each category.
               </span>
             </div>
-            <div className="weights-groups">
-              {Object.entries(CATEGORY_GROUPS).map(([group, cats]) => (
-                <div key={group} className="weight-group">
-                  <div className="weight-group-header">
-                    <div className="weight-group-title">
-                      <span className="weight-group-label">{group}</span>
-                      <span className="weight-group-share">
-                        {(normalizedCategoryWeights[group] * 100).toFixed(1)}%
+
+            <div className="builder-grid">
+              {categoryOrder.map((cat) => {
+                const subs = userGroups[cat] || [];
+                const isTarget = dragTarget === cat;
+                const sharePct =
+                  (normalizedCategoryWeights[cat] || 0) * 100;
+                return (
+                  <div
+                    key={cat}
+                    className={`builder-category ${isTarget ? "builder-category--drop" : ""}`}
+                    onDragOver={(e) => onDragOver(e, cat)}
+                    onDragLeave={(e) => onDragLeave(e, cat)}
+                    onDrop={(e) => onDrop(e, cat)}
+                  >
+                    <div className="builder-category-header">
+                      <input
+                        className="builder-category-name"
+                        value={nameDrafts[cat] ?? cat}
+                        onChange={(e) =>
+                          handleNameDraftChange(cat, e.target.value)
+                        }
+                        onBlur={() => commitNameDraft(cat)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.currentTarget.blur();
+                          } else if (e.key === "Escape") {
+                            cancelNameDraft(cat);
+                            e.currentTarget.blur();
+                          }
+                        }}
+                      />
+                      <span className="builder-category-share">
+                        {sharePct.toFixed(1)}%
                       </span>
+                      {categoryOrder.length > 1 && (
+                        <button
+                          className="builder-category-remove"
+                          onClick={() => removeCategory(cat)}
+                          title="Remove this category (sub-categories move to the first remaining one)"
+                        >
+                          ×
+                        </button>
+                      )}
                     </div>
+
                     <input
                       type="range"
                       min="0"
                       max="1"
                       step="0.01"
-                      value={categoryWeights[group]}
+                      value={categoryWeights[cat] ?? 0}
                       onChange={(e) =>
                         handleCategoryWeightChange(
-                          group,
+                          cat,
                           parseFloat(e.target.value)
                         )
                       }
                       className="weight-slider-input weight-group-slider"
                     />
-                  </div>
-                  <div className="weight-group-sliders">
-                    {cats.map((catName) => (
-                      <div key={catName} className="weight-slider">
-                        <div className="weight-slider-header">
-                          <span className="weight-slider-label">
-                            {catName}
-                          </span>
-                          <span className="weight-slider-value">
-                            {(
-                              normalizedSubCategoryWeights[catName] * 100
-                            ).toFixed(1)}
-                            %
-                          </span>
+
+                    <div className="builder-subs">
+                      {subs.length === 0 ? (
+                        <div className="builder-empty">
+                          Drop sub-categories here
                         </div>
-                        <input
-                          type="range"
-                          min="0"
-                          max="1"
-                          step="0.01"
-                          value={subCategoryWeights[catName]}
-                          onChange={(e) =>
-                            handleSubCategoryWeightChange(
-                              catName,
-                              parseFloat(e.target.value)
-                            )
-                          }
-                          className="weight-slider-input"
-                        />
-                      </div>
-                    ))}
+                      ) : (
+                        subs.map((sub) => (
+                          <div
+                            key={sub}
+                            className="builder-sub"
+                            draggable
+                            onDragStart={(e) => onDragStart(e, sub, cat)}
+                            onDragEnd={onDragEnd}
+                          >
+                            <div className="builder-sub-row">
+                              <span className="builder-sub-handle">⋮⋮</span>
+                              <span className="builder-sub-name">{sub}</span>
+                              <span className="builder-sub-share">
+                                {(
+                                  (normalizedSubCategoryWeights[sub] || 0) *
+                                  100
+                                ).toFixed(1)}
+                                %
+                              </span>
+                            </div>
+                            <input
+                              type="range"
+                              min="0"
+                              max="1"
+                              step="0.01"
+                              value={subCategoryWeights[sub] ?? 0}
+                              onChange={(e) =>
+                                handleSubCategoryWeightChange(
+                                  sub,
+                                  parseFloat(e.target.value)
+                                )
+                              }
+                              className="weight-slider-input"
+                            />
+                          </div>
+                        ))
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </div>
@@ -357,7 +671,7 @@ export default function DiscoverGoat() {
           <div className="result-card">
             <div className="result-card-header">
               <div>
-                <h3 className="result-card-title">GOAT Ranking</h3>
+                <h3 className="result-card-title">Your GOAT Ranking</h3>
                 <p className="result-card-subtitle">
                   Top 15 by career EI · lower is better · click a row for the
                   player card
@@ -414,6 +728,8 @@ export default function DiscoverGoat() {
           player={playerCard}
           allEIScores={results?.allEIScores || []}
           totalPlayers={results?.playerRankings.length || 0}
+          userGroups={userGroups}
+          categoryOrder={categoryOrder}
           onClose={() => setPlayerCard(null)}
         />
       )}
@@ -421,7 +737,14 @@ export default function DiscoverGoat() {
   );
 }
 
-function PlayerCard({ player, allEIScores, totalPlayers, onClose }) {
+function PlayerCard({
+  player,
+  allEIScores,
+  totalPlayers,
+  userGroups,
+  categoryOrder,
+  onClose,
+}) {
   if (!player) return null;
 
   const bestSeason = player.allSeasons.reduce(
@@ -447,9 +770,11 @@ function PlayerCard({ player, allEIScores, totalPlayers, onClose }) {
     catPercentiles[catName] = score != null ? (1 - score) * 100 : null;
   }
 
+  // Section averages follow the USER's tree, not the library defaults.
   const groupPercentiles = {};
-  for (const [group, cats] of Object.entries(CATEGORY_GROUPS)) {
-    const vals = cats.map((c) => catPercentiles[c]).filter((v) => v != null);
+  for (const group of categoryOrder) {
+    const subs = userGroups[group] || [];
+    const vals = subs.map((c) => catPercentiles[c]).filter((v) => v != null);
     groupPercentiles[group] =
       vals.length > 0 ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
   }

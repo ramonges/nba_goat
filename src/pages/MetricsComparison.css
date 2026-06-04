@@ -70,15 +70,52 @@
   gap: 6px;
 }
 
+.weight-group-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 2px;
+}
+
+.weight-group-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .weight-group-label {
   font-size: 0.68rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--accent);
-  padding-bottom: 4px;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 2px;
+}
+
+.weight-group-share {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.weight-group-slider {
+  width: 100%;
+}
+
+.weights-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.weights-hint-inline {
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  opacity: 0.8;
 }
 
 .weight-group-sliders {

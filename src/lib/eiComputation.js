@@ -1,18 +1,28 @@
 import { supabase, TABLE_NAME } from "./supabase";
 
 /**
- * EI Framework — 24 categories
- * Follows the notebook's exact 2-step transformation:
- *   Step 1: Sigmoid normalization (10th/90th percentile bounds → logistic → 0-1)
- *   Step 2: Category RMS + Weighted RMS
- * Result: EI ∈ [0, 1] where LOWER is BETTER (0 = GOAT)
+ * EI Framework — hierarchical (categories → sub-categories → measures)
+ *
+ * Two-level weighting tree (see whiteboard):
+ *   - 9 top-level CATEGORIES (Volume, Rebounding, ...). Their weights sum to 1.
+ *   - Each category holds several SUB-CATEGORIES (e.g. Scoring Production).
+ *     Sub-category weights are relative within their category.
+ *   - Each sub-category holds raw measures.
+ *
+ * Pipeline (lower EI is better, 0 = GOAT):
+ *   Step 1: each measure → sigmoid normalization (10th/90th pct bounds → logistic → 0-1)
+ *   Step 2: sub-category score = RMS of its normalized measures
+ *   Step 3: category score    = weighted RMS of its sub-category scores (sub-category weights)
+ *   Step 4: EI                = weighted RMS of category scores (category weights, sum to 1)
  */
 
+// Maps each top-level CATEGORY to its SUB-CATEGORIES.
 export const CATEGORY_GROUPS = {
-  "Volume / Availability": [
+  Volume: [
     "Scoring Production",
     "Minutes Load",
     "Games Played",
+    "Plus-Minus Impact",
   ],
   Rebounding: [
     "Total Rebounding",
@@ -26,10 +36,9 @@ export const CATEGORY_GROUPS = {
     "Three-Point Shooting",
     "Free Throw Shooting",
     "Turnover Control",
+    "Assists",
   ],
   Stability: ["Consistency", "Bad-Game Rate"],
-  Impact: ["Plus-Minus Impact"],
-  Assists: ["Assists"],
   Playoffs: ["Playoff Production", "Playoff Efficiency", "Playoff Consistency"],
   Legacy: ["Awards Recognition", "Championship Success"],
 };
@@ -134,18 +143,53 @@ export const CATEGORIES = {
     direction: "lower",
   },
   "Awards Recognition": {
-    measures: [],
+    measures: [
+      "nba_most_valuable_player",
+      "all_nba",
+      "all_defensive_team",
+      "nba_all_star",
+      "nba_defensive_player_of_the_year",
+      "nba_player_of_the_month",
+      "olympic_gold_medal_count",
+      "hall_of_fame_inductee",
+    ],
     direction: "higher",
   },
   "Championship Success": {
-    measures: [],
+    measures: ["nba_champion", "nba_finals_most_valuable_player"],
     direction: "higher",
   },
 };
 
+// ─── Default weights for the two-level tree ──────────────────────────────────
+
+// Top-level category weights. Must sum to 1 (the computation normalizes anyway).
+export const DEFAULT_CATEGORY_WEIGHTS = (() => {
+  const groups = Object.keys(CATEGORY_GROUPS);
+  const w = {};
+  for (const g of groups) w[g] = 1 / groups.length;
+  return w;
+})();
+
+// Sub-category weights are relative within their parent category (default: equal).
+export const DEFAULT_SUBCATEGORY_WEIGHTS = (() => {
+  const w = {};
+  for (const subCats of Object.values(CATEGORY_GROUPS)) {
+    for (const subCat of subCats) w[subCat] = 1.0;
+  }
+  return w;
+})();
+
 const SIGMOID_ALPHA = 0.10;
 
-const FETCH_COLS = [
+// Minimum career games required to enter the ranking when comparing "all
+// players" at once. Filters role players on title rosters from artificially
+// topping Championship/Legacy-heavy weightings. Shared across pages so they
+// produce identical rankings given identical inputs.
+export const MIN_GAMES_ALL_PLAYERS = 200;
+
+// Stat columns required by the EI pipeline. Always selected from Supabase.
+const STAT_COLS = [
   "player_name",
   "season",
   "game_type",
@@ -167,11 +211,79 @@ const FETCH_COLS = [
   "turnovers",
   "personal_fouls",
   "plus_minus",
-].join(", ");
+];
+
+// Candidate award / legacy columns. Each candidate has a clean JS `key` used
+// throughout the codebase, and (optionally) a `source` if the actual Supabase
+// column name uses characters that don't translate to a JS identifier (e.g.
+// hyphens in `all-nba`, `nba_all-star`, etc.). When `source` is given we
+// fetch with a PostgREST alias so the row still arrives keyed by `key`.
+const CANDIDATE_AWARD_COLS = [
+  { key: "nba_most_valuable_player" },
+  { key: "nba_champion" },
+  { key: "nba_finals_most_valuable_player" },
+  { key: "all_nba", source: "all-nba" },
+  { key: "all_defensive_team", source: "all-defensive_team" },
+  { key: "nba_all_star", source: "nba_all-star" },
+  { key: "nba_defensive_player_of_the_year" },
+  { key: "olympic_gold_medal_count" },
+  { key: "nba_player_of_the_month" },
+  { key: "hall_of_fame_inductee" },
+];
+
+const sourceOf = (c) => c.source ?? c.key;
+const selectFragmentOf = (c) =>
+  c.source ? `${c.key}:"${c.source}"` : c.key;
+
+// Filled lazily by `ensureFetchCols()`. Both `null` until the first probe.
+let availableAwardCols = null;
+let cachedFetchCols = null;
+
+async function ensureFetchCols() {
+  if (cachedFetchCols) return cachedFetchCols;
+
+  try {
+    const { data, error } = await supabase
+      .from(TABLE_NAME)
+      .select("*")
+      .limit(1);
+    if (error) throw error;
+    if (data && data.length > 0) {
+      const present = new Set(Object.keys(data[0]));
+      availableAwardCols = CANDIDATE_AWARD_COLS.filter((c) =>
+        present.has(sourceOf(c))
+      );
+      const missing = CANDIDATE_AWARD_COLS.filter(
+        (c) => !present.has(sourceOf(c))
+      ).map(sourceOf);
+      if (missing.length > 0) {
+        console.warn(
+          `[EI] Award columns missing from ${TABLE_NAME}: ${missing.join(", ")}. ` +
+            "These will be skipped in the Legacy category."
+        );
+      }
+    } else {
+      availableAwardCols = [];
+    }
+  } catch (err) {
+    console.warn(
+      "[EI] Failed to probe table columns, proceeding without awards:",
+      err
+    );
+    availableAwardCols = [];
+  }
+
+  cachedFetchCols = [
+    ...STAT_COLS,
+    ...availableAwardCols.map(selectFragmentOf),
+  ].join(", ");
+  return cachedFetchCols;
+}
 
 // ─── Data Fetching ───────────────────────────────────────────────────────────
 
 export async function fetchPlayerSeasonAverages(playerName) {
+  const cols = await ensureFetchCols();
   let allRows = [];
   const pageSize = 1000;
   let offset = 0;
@@ -179,7 +291,7 @@ export async function fetchPlayerSeasonAverages(playerName) {
   while (true) {
     const { data, error } = await supabase
       .from(TABLE_NAME)
-      .select(FETCH_COLS)
+      .select(cols)
       .eq("player_name", playerName)
       .range(offset, offset + pageSize - 1);
 
@@ -208,6 +320,7 @@ export async function fetchAllPlayersSeasonAverages(playerNames, onProgress) {
 }
 
 export async function fetchSeasonData(season, onProgress) {
+  const cols = await ensureFetchCols();
   let allRows = [];
   const pageSize = 1000;
   let offset = 0;
@@ -215,7 +328,7 @@ export async function fetchSeasonData(season, onProgress) {
   while (true) {
     const { data, error } = await supabase
       .from(TABLE_NAME)
-      .select(FETCH_COLS)
+      .select(cols)
       .eq("season", season)
       .range(offset, offset + pageSize - 1);
 
@@ -466,6 +579,22 @@ function computeSeasonMeasures(playerName, rows) {
         measures.playoff_bad_game_rate = 1.0;
       }
 
+      // Award / legacy aggregation. Awards live on a single row of the season
+      // (typically the season-final row), so we take the max across all rows.
+      // The row key matches `c.key` because hyphenated columns are fetched
+      // through a PostgREST alias.
+      const awardSourceRows = [...regular, ...playoff];
+      const awardColsToUse = availableAwardCols ?? CANDIDATE_AWARD_COLS;
+      for (const c of awardColsToUse) {
+        const col = c.key;
+        let best = 0;
+        for (const r of awardSourceRows) {
+          const v = parseFloat(r[col]);
+          if (!isNaN(v) && v > best) best = v;
+        }
+        measures[col] = best;
+      }
+
       return { player_name: playerName, season, games, ...measures };
     })
     .filter(Boolean);
@@ -473,8 +602,8 @@ function computeSeasonMeasures(playerName, rows) {
 
 // ─── EI Computation (2-step sigmoid transformation) ──────────────────────────
 
-export function computeEIScores(seasonData, weights, topYears) {
-  // Step 1: Compute percentile bounds for each measure (10th and 90th)
+// Step 1: percentile bounds (10th/90th) for every measure across the dataset.
+function computeMeasureBounds(seasonData) {
   const allMeasureNames = new Set();
   for (const cat of Object.values(CATEGORIES)) {
     cat.measures.forEach((m) => allMeasureNames.add(m));
@@ -510,77 +639,199 @@ export function computeEIScores(seasonData, weights, topYears) {
     measureBounds[m] = { minVal, maxVal };
   }
 
-  // Sigmoid anchor points
-  const x_c = -Math.log(1 / SIGMOID_ALPHA - 1); // ≈ -2.197
-  const x_d = -Math.log(1 / (1 - SIGMOID_ALPHA) - 1); // ≈ 2.197
+  return measureBounds;
+}
 
-  // Step 2: Transform each measure to [0,1] using sigmoid, then compute EI
-  const seasonScores = seasonData.map((s) => {
-    const categoryScores = {};
+// Sigmoid anchor points (shared across seasons).
+const SIGMOID_X_C = -Math.log(1 / SIGMOID_ALPHA - 1); // ≈ -2.197
+const SIGMOID_X_D = -Math.log(1 / (1 - SIGMOID_ALPHA) - 1); // ≈ 2.197
 
-    for (const [catName, cat] of Object.entries(CATEGORIES)) {
-      if (cat.measures.length === 0) {
-        categoryScores[catName] = null;
-        continue;
-      }
+// Step 2: per-season sub-category scores = RMS of sigmoid-normalized measures.
+function computeSubCategoryScores(s, measureBounds) {
+  const subCategoryScores = {};
 
-      const transformedScores = [];
+  for (const [catName, cat] of Object.entries(CATEGORIES)) {
+    if (cat.measures.length === 0) {
+      subCategoryScores[catName] = null;
+      continue;
+    }
 
-      for (const m of cat.measures) {
-        const val = s[m];
-        if (val == null || isNaN(val) || !isFinite(val)) continue;
-        const bounds = measureBounds[m];
-        if (!bounds) continue;
+    const transformedScores = [];
 
-        const { minVal, maxVal } = bounds;
-        const span = maxVal - minVal;
+    for (const m of cat.measures) {
+      const val = s[m];
+      if (val == null || isNaN(val) || !isFinite(val)) continue;
+      const bounds = measureBounds[m];
+      if (!bounds) continue;
 
-        // Sigmoid normalization
-        let mHat = x_c + ((x_d - x_c) / span) * (val - minVal);
-        mHat = Math.max(-50, Math.min(50, mHat)); // clip
-        const mTilde = 1 / (1 + Math.exp(-mHat)); // sigmoid → [0,1]
+      const { minVal, maxVal } = bounds;
+      const span = maxVal - minVal;
 
-        // Direction: for "higher is better" → score = 1 - mTilde (so top player → low score)
-        // For "lower is better" → score = mTilde
-        const score =
-          cat.direction === "higher" ? 1 - mTilde : mTilde;
+      // Sigmoid normalization
+      let mHat =
+        SIGMOID_X_C + ((SIGMOID_X_D - SIGMOID_X_C) / span) * (val - minVal);
+      mHat = Math.max(-50, Math.min(50, mHat)); // clip
+      const mTilde = 1 / (1 + Math.exp(-mHat)); // sigmoid → [0,1]
 
-        transformedScores.push(score);
-      }
+      // "higher is better" → score = 1 - mTilde (top player → low score)
+      // "lower is better"  → score = mTilde
+      const score = cat.direction === "higher" ? 1 - mTilde : mTilde;
 
-      if (transformedScores.length === 0) {
-        categoryScores[catName] = null;
+      transformedScores.push(score);
+    }
+
+    if (transformedScores.length === 0) {
+      subCategoryScores[catName] = null;
+    } else {
+      subCategoryScores[catName] = Math.sqrt(
+        transformedScores.reduce((sum, v) => sum + v * v, 0) /
+          transformedScores.length
+      );
+    }
+  }
+
+  return subCategoryScores;
+}
+
+// ─── Career-level Legacy normalization ───────────────────────────────────────
+// Legacy is intrinsically cumulative (career rings, MVP count, All-NBA
+// selections, …). Per-season aggregation gives 1-season role players on title
+// teams artificially perfect Championship Success. We instead compute one
+// career-cumulative value per player, percentile-normalize across the player
+// pool, and reuse that constant score for all of that player's seasons.
+//
+// Aggregation rule per measure:
+//   - MAX: columns that already carry the cumulative value end-of-season
+//     (Olympic medal running counts, binary Hall-of-Fame flag).
+//   - SUM: per-season binary/integer flags that should accumulate over career
+//     (rings, MVPs, All-NBA / All-Defensive / All-Star selections, etc.).
+const LEGACY_MAX_MEASURES = new Set([
+  "olympic_gold_medal_count",
+  "hall_of_fame_inductee",
+]);
+
+function legacyMeasureNames() {
+  const subCats = CATEGORY_GROUPS.Legacy ?? [];
+  const names = new Set();
+  for (const sc of subCats) {
+    const cat = CATEGORIES[sc];
+    if (!cat) continue;
+    cat.measures.forEach((m) => names.add(m));
+  }
+  return [...names];
+}
+
+function aggregateCareerLegacy(seasonData) {
+  const measures = legacyMeasureNames();
+  const byPlayer = {};
+  for (const s of seasonData) {
+    if (!byPlayer[s.player_name]) {
+      byPlayer[s.player_name] = { player_name: s.player_name };
+      for (const m of measures) byPlayer[s.player_name][m] = 0;
+    }
+    const c = byPlayer[s.player_name];
+    for (const m of measures) {
+      const v = s[m];
+      if (v == null || isNaN(v) || !isFinite(v)) continue;
+      if (LEGACY_MAX_MEASURES.has(m)) {
+        if (v > c[m]) c[m] = v;
       } else {
-        // Category score = RMS of transformed measures (as in notebook)
-        const rms = Math.sqrt(
-          transformedScores.reduce((sum, v) => sum + v * v, 0) /
-            transformedScores.length
-        );
-        categoryScores[catName] = rms;
+        c[m] = c[m] + v;
       }
     }
+  }
+  return Object.values(byPlayer);
+}
 
-    // Final EI = Weighted RMS of category scores
-    let weightedSumSq = 0;
-    let totalWeight = 0;
-
-    for (const [catName, score] of Object.entries(categoryScores)) {
-      const w = weights[catName] ?? 0;
-      if (w === 0 || score === null) continue;
-      weightedSumSq += w * score * score;
-      totalWeight += w;
+function computeCareerLegacyBounds(careerArray) {
+  const measures = legacyMeasureNames();
+  const bounds = {};
+  for (const m of measures) {
+    const values = careerArray
+      .map((c) => c[m])
+      .filter((v) => v != null && !isNaN(v) && isFinite(v))
+      .sort((a, b) => a - b);
+    const n = values.length;
+    if (n < 5) {
+      bounds[m] = null;
+      continue;
     }
+    const minIdx = Math.floor(n * SIGMOID_ALPHA);
+    const maxIdx = Math.floor(n * (1 - SIGMOID_ALPHA));
+    let minVal = values[minIdx];
+    let maxVal = values[maxIdx];
+    if (Math.abs(maxVal - minVal) < 1e-9) {
+      minVal = values[0];
+      maxVal = values[n - 1];
+    }
+    if (Math.abs(maxVal - minVal) < 1e-9) {
+      minVal -= 1e-6;
+      maxVal += 1e-6;
+    }
+    bounds[m] = { minVal, maxVal };
+  }
+  return bounds;
+}
 
-    const ei = totalWeight > 0 ? Math.sqrt(weightedSumSq / totalWeight) : 1;
+function computeLegacySubScoresFor(careerRow, careerBounds) {
+  const result = {};
+  for (const subCat of CATEGORY_GROUPS.Legacy ?? []) {
+    const cat = CATEGORIES[subCat];
+    if (!cat) continue;
+    const transformed = [];
+    for (const m of cat.measures) {
+      const val = careerRow[m];
+      if (val == null || isNaN(val) || !isFinite(val)) continue;
+      const bounds = careerBounds[m];
+      if (!bounds) continue;
+      const { minVal, maxVal } = bounds;
+      const span = maxVal - minVal;
+      let mHat =
+        SIGMOID_X_C + ((SIGMOID_X_D - SIGMOID_X_C) / span) * (val - minVal);
+      mHat = Math.max(-50, Math.min(50, mHat));
+      const mTilde = 1 / (1 + Math.exp(-mHat));
+      const score = cat.direction === "higher" ? 1 - mTilde : mTilde;
+      transformed.push(score);
+    }
+    result[subCat] =
+      transformed.length === 0
+        ? null
+        : Math.sqrt(
+            transformed.reduce((sum, v) => sum + v * v, 0) / transformed.length
+          );
+  }
+  return result;
+}
 
-    return {
-      ...s,
-      categoryScores,
-      eiScore: ei,
-    };
-  });
+function computeCareerLegacyScores(seasonData) {
+  const careerArray = aggregateCareerLegacy(seasonData);
+  const careerBounds = computeCareerLegacyBounds(careerArray);
+  const out = {};
+  for (const row of careerArray) {
+    out[row.player_name] = computeLegacySubScoresFor(row, careerBounds);
+  }
+  return out;
+}
 
-  // Group by player, apply top years (lowest EI seasons = best)
+// Weighted RMS of {key: score} pairs given a weights lookup. Weights are
+// normalized by their own sum, so they need not sum to exactly 1.
+function weightedRMS(scores, weights) {
+  let weightedSumSq = 0;
+  let totalWeight = 0;
+  for (const [key, score] of Object.entries(scores)) {
+    const w = weights[key] ?? 0;
+    if (w === 0 || score === null || score === undefined) continue;
+    weightedSumSq += w * score * score;
+    totalWeight += w;
+  }
+  return totalWeight > 0 ? Math.sqrt(weightedSumSq / totalWeight) : 1;
+}
+
+// Group seasons by player, pick best (lowest-EI) seasons, build rankings.
+// `minGames` (optional) drops any player whose total games < threshold; useful
+// for the "all players" mode where role players on title rosters would
+// otherwise spike Championship / Legacy scores after only a handful of games.
+function buildPlayerRankings(seasonScores, topYears, minGames = 0) {
   const playerSeasons = {};
   for (const s of seasonScores) {
     if (!playerSeasons[s.player_name]) {
@@ -623,15 +874,118 @@ export function computeEIScores(seasonData, weights, topYears) {
     });
   }
 
+  const filtered =
+    minGames > 0
+      ? playerRankings.filter((p) => p.totalGames >= minGames)
+      : playerRankings;
+
   // Sort ascending: lowest careerEI = best player = rank 1
-  playerRankings.sort((a, b) => a.careerEI - b.careerEI);
+  filtered.sort((a, b) => a.careerEI - b.careerEI);
 
   const allEIScores = seasonScores.map((s) => s.eiScore);
 
-  return {
-    playerRankings,
+  return { playerRankings: filtered, allEIScores };
+}
+
+/**
+ * Flat EI: single weighted RMS over all (sub-)categories.
+ * `weights` is keyed by sub-category name. Used by DiscoverGoat & WembyIndicator.
+ */
+export function computeEIScores(seasonData, weights, topYears, opts = {}) {
+  const { minGames = 0 } = opts;
+  const measureBounds = computeMeasureBounds(seasonData);
+  const careerLegacy = computeCareerLegacyScores(seasonData);
+  const legacySubCats = CATEGORY_GROUPS.Legacy ?? [];
+
+  const seasonScores = seasonData.map((s) => {
+    const categoryScores = computeSubCategoryScores(s, measureBounds);
+    // Override Legacy sub-categories with the player's career-cumulative value
+    // so a 1-season ring on a title roster doesn't outrank a multi-ring HOFer.
+    const careerLeg = careerLegacy[s.player_name];
+    if (careerLeg) {
+      for (const sc of legacySubCats) {
+        if (careerLeg[sc] !== undefined) categoryScores[sc] = careerLeg[sc];
+      }
+    }
+    const ei = weightedRMS(categoryScores, weights);
+    return { ...s, categoryScores, eiScore: ei };
+  });
+
+  const { playerRankings, allEIScores } = buildPlayerRankings(
     seasonScores,
-    allEIScores,
-    measureBounds,
-  };
+    topYears,
+    minGames
+  );
+
+  return { playerRankings, seasonScores, allEIScores, measureBounds };
+}
+
+/**
+ * Hierarchical EI following the two-level weight tree:
+ *   sub-category scores → (sub-category weights) → category scores
+ *                       → (category weights, sum to 1) → EI
+ *
+ * @param {object} categoryWeights    keyed by category (Volume, Rebounding, ...)
+ * @param {object} subCategoryWeights keyed by sub-category (Scoring Production, ...)
+ */
+export function computeEIScoresHierarchical(
+  seasonData,
+  categoryWeights,
+  subCategoryWeights,
+  topYears,
+  opts = {}
+) {
+  const { minGames = 0, categoryGroups } = opts;
+  // Allow callers to pass a custom category → sub-category tree (used by the
+  // "Create your own GOAT" page where users build groupings interactively).
+  const groups = categoryGroups ?? CATEGORY_GROUPS;
+  const measureBounds = computeMeasureBounds(seasonData);
+  const careerLegacy = computeCareerLegacyScores(seasonData);
+
+  // Legacy sub-categories are still defined globally; the user's category tree
+  // may place them in arbitrary parents but the leaf-level career override
+  // should still apply wherever they appear.
+  const legacyLeafSet = new Set(CATEGORY_GROUPS.Legacy ?? []);
+
+  const seasonScores = seasonData.map((s) => {
+    // Step 2: sub-category (leaf) scores. Kept on `categoryScores` for the
+    // player-card percentile charts that read per-sub-category values.
+    const categoryScores = computeSubCategoryScores(s, measureBounds);
+
+    // Override Legacy sub-categories with the player's career-cumulative
+    // score (same across all of the player's seasons) so a 1-ring role
+    // player on a title roster doesn't outrank a multi-ring HOFer.
+    const careerLeg = careerLegacy[s.player_name];
+    if (careerLeg) {
+      for (const sc of legacyLeafSet) {
+        if (careerLeg[sc] !== undefined) categoryScores[sc] = careerLeg[sc];
+      }
+    }
+
+    // Step 3: category score = weighted RMS of its sub-category scores.
+    const categoryGroupScores = {};
+    for (const [group, subCats] of Object.entries(groups)) {
+      const groupScores = {};
+      for (const subCat of subCats) {
+        groupScores[subCat] = categoryScores[subCat];
+      }
+      const hasAny = subCats.some((c) => categoryScores[c] != null);
+      categoryGroupScores[group] = hasAny
+        ? weightedRMS(groupScores, subCategoryWeights)
+        : null;
+    }
+
+    // Step 4: EI = weighted RMS of category scores (category weights sum to 1).
+    const ei = weightedRMS(categoryGroupScores, categoryWeights);
+
+    return { ...s, categoryScores, categoryGroupScores, eiScore: ei };
+  });
+
+  const { playerRankings, allEIScores } = buildPlayerRankings(
+    seasonScores,
+    topYears,
+    minGames
+  );
+
+  return { playerRankings, seasonScores, allEIScores, measureBounds };
 }

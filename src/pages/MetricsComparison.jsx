@@ -6,9 +6,12 @@ import { PLAYER_COLORS } from "../lib/supabase";
 import { ALL_PLAYERS } from "../lib/players";
 import {
   CATEGORY_GROUPS,
+  MIN_GAMES_ALL_PLAYERS,
   CATEGORIES,
+  DEFAULT_CATEGORY_WEIGHTS,
+  DEFAULT_SUBCATEGORY_WEIGHTS,
   fetchAllPlayersSeasonAverages,
-  computeEIScores,
+  computeEIScoresHierarchical,
 } from "../lib/eiComputation";
 import "./MetricsComparison.css";
 
@@ -214,15 +217,27 @@ const CATEGORY_INFO = {
     direction: "Lower raw values are better (fewer bad playoff games)",
   },
   "Awards Recognition": {
-    summary: "League recognition through awards",
-    metrics: ["MVP votes, All-NBA selections, All-Star appearances (when available)"],
-    calculation: "Aggregated from awards data when available in the dataset.",
+    summary: "Individual league recognition and honors",
+    metrics: [
+      "MVP (nba_most_valuable_player)",
+      "All-NBA team selection",
+      "All-Defensive team selection",
+      "All-Star appearance",
+      "Defensive Player of the Year",
+      "Player of the Month",
+      "Olympic gold medals (career total)",
+      "Hall of Fame inductee (career)",
+    ],
+    calculation: "Each season takes the max value of every award column across that season's rows. The eight measures are sigmoid-normalized league-wide then combined via RMS, so a season with multiple honors lowers the EI further.",
     direction: "Higher raw values are better",
   },
   "Championship Success": {
-    summary: "Team success and championship impact",
-    metrics: ["Championship rings, Finals appearances (when available)"],
-    calculation: "Aggregated from championship data when available in the dataset.",
+    summary: "Team success — rings and Finals impact",
+    metrics: [
+      "NBA Champion (nba_champion)",
+      "Finals MVP (nba_finals_most_valuable_player)",
+    ],
+    calculation: "Two season-level flags, sigmoid-normalized and combined via RMS. Title seasons (especially with a Finals MVP) drive EI sharply lower.",
     direction: "Higher raw values are better",
   },
 };
@@ -275,7 +290,7 @@ function InfoTooltip({ category }) {
   );
 }
 
-function WeightSlider({ category, value, onChange }) {
+function WeightSlider({ category, value, share, onChange }) {
   return (
     <div className="weight-slider">
       <div className="weight-slider-header">
@@ -283,7 +298,9 @@ function WeightSlider({ category, value, onChange }) {
           {category}
           <InfoTooltip category={category} />
         </span>
-        <span className="weight-slider-value">{value.toFixed(2)}</span>
+        <span className="weight-slider-value">
+          {(share * 100).toFixed(1)}%
+        </span>
       </div>
       <input
         type="range"
@@ -298,7 +315,7 @@ function WeightSlider({ category, value, onChange }) {
   );
 }
 
-function PlayerCard({ player, allEIScores, onClose }) {
+function PlayerCard({ player, allEIScores, totalPlayers, onClose }) {
   if (!player) return null;
 
   const bestSeason = player.allSeasons.reduce(
@@ -367,7 +384,7 @@ function PlayerCard({ player, allEIScores, onClose }) {
               <strong>EI Percentile:</strong> {percentile}th
             </div>
             <div className="info-line">
-              <strong>Rank:</strong> {rank}/{allEIScores.length}
+              <strong>Rank:</strong> {rank}/{totalPlayers}
             </div>
           </div>
 
@@ -644,13 +661,15 @@ function LeagueDistributionChart({ seasonScores, topYears }) {
 export default function MetricsComparison() {
   const [playerMode, setPlayerMode] = useState("all");
   const [selectedPlayers, setSelectedPlayers] = useState([]);
-  const [weights, setWeights] = useState(() => {
-    const w = {};
-    for (const catName of Object.keys(CATEGORIES)) {
-      w[catName] = 1.0;
-    }
-    return w;
-  });
+  // Top-level category weights (Volume, Rebounding, ...). Constrained to sum to 1
+  // by normalization at compute time; raw slider values are kept here.
+  const [categoryWeights, setCategoryWeights] = useState(() => ({
+    ...DEFAULT_CATEGORY_WEIGHTS,
+  }));
+  // Sub-category weights within each category (Scoring Production, ...).
+  const [subCategoryWeights, setSubCategoryWeights] = useState(() => ({
+    ...DEFAULT_SUBCATEGORY_WEIGHTS,
+  }));
   const [topYears, setTopYears] = useState(TOP_YEARS_OPTIONS[0]);
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState("");
@@ -662,9 +681,44 @@ export default function MetricsComparison() {
   const [graphicTopN, setGraphicTopN] = useState(15);
   const [playerCard, setPlayerCard] = useState(null);
 
-  const handleWeightChange = useCallback((metric, value) => {
-    setWeights((prev) => ({ ...prev, [metric]: value }));
+  const handleCategoryWeightChange = useCallback((category, value) => {
+    setCategoryWeights((prev) => ({ ...prev, [category]: value }));
   }, []);
+
+  const handleSubCategoryWeightChange = useCallback((subCategory, value) => {
+    setSubCategoryWeights((prev) => ({ ...prev, [subCategory]: value }));
+  }, []);
+
+  // Category weights normalized so they sum to exactly 1 (display + compute).
+  const normalizedCategoryWeights = useMemo(() => {
+    const entries = Object.entries(categoryWeights);
+    const total = entries.reduce((s, [, v]) => s + (v || 0), 0);
+    if (total <= 0) {
+      const n = entries.length;
+      return Object.fromEntries(entries.map(([k]) => [k, 1 / n]));
+    }
+    return Object.fromEntries(entries.map(([k, v]) => [k, (v || 0) / total]));
+  }, [categoryWeights]);
+
+  // Sub-category weights normalized to sum to 1 within each parent category.
+  const normalizedSubCategoryWeights = useMemo(() => {
+    const result = {};
+    for (const [, subs] of Object.entries(CATEGORY_GROUPS)) {
+      const total = subs.reduce(
+        (s, sub) => s + (subCategoryWeights[sub] || 0),
+        0
+      );
+      if (total <= 0) {
+        const n = subs.length;
+        for (const sub of subs) result[sub] = 1 / n;
+      } else {
+        for (const sub of subs) {
+          result[sub] = (subCategoryWeights[sub] || 0) / total;
+        }
+      }
+    }
+    return result;
+  }, [subCategoryWeights]);
 
   const handleFetchData = useCallback(async () => {
     const players =
@@ -700,12 +754,27 @@ export default function MetricsComparison() {
     }
   }, [playerMode, selectedPlayers]);
 
-  // Recompute EI scores whenever weights, topYears, or seasonData changes
+  // Recompute EI scores whenever weights, topYears, or seasonData changes.
+  // In "All Players" mode we apply the same min-games gate as the other two
+  // EI pages so all three rank identically given identical inputs.
   useEffect(() => {
     if (!seasonData || seasonData.length === 0) return;
-    const eiResults = computeEIScores(seasonData, weights, topYears.value);
+    const minGames = playerMode === "all" ? MIN_GAMES_ALL_PLAYERS : 0;
+    const eiResults = computeEIScoresHierarchical(
+      seasonData,
+      normalizedCategoryWeights,
+      normalizedSubCategoryWeights,
+      topYears.value,
+      { minGames }
+    );
     setResults(eiResults);
-  }, [seasonData, weights, topYears]);
+  }, [
+    seasonData,
+    normalizedCategoryWeights,
+    normalizedSubCategoryWeights,
+    topYears,
+    playerMode,
+  ]);
 
   const top15 = useMemo(() => {
     if (!results) return [];
@@ -831,18 +900,46 @@ export default function MetricsComparison() {
           </div>
 
           <div className="goat-right-controls">
-            <label className="control-label">Category Weights</label>
+            <div className="weights-header">
+              <label className="control-label">Category Weights</label>
+              <span className="weights-hint-inline">
+                Category weights sum to 1 · sub-category weights sum to 1
+                within each category
+              </span>
+            </div>
             <div className="weights-groups">
               {Object.entries(CATEGORY_GROUPS).map(([group, cats]) => (
                 <div key={group} className="weight-group">
-                  <div className="weight-group-label">{group}</div>
+                  <div className="weight-group-header">
+                    <div className="weight-group-title">
+                      <span className="weight-group-label">{group}</span>
+                      <span className="weight-group-share">
+                        {(normalizedCategoryWeights[group] * 100).toFixed(1)}%
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="1"
+                      step="0.01"
+                      value={categoryWeights[group]}
+                      onChange={(e) =>
+                        handleCategoryWeightChange(
+                          group,
+                          parseFloat(e.target.value)
+                        )
+                      }
+                      className="weight-slider-input weight-group-slider"
+                    />
+                  </div>
                   <div className="weight-group-sliders">
                     {cats.map((catName) => (
                       <WeightSlider
                         key={catName}
                         category={catName}
-                        value={weights[catName]}
-                        onChange={handleWeightChange}
+                        value={subCategoryWeights[catName]}
+                        share={normalizedSubCategoryWeights[catName]}
+                        onChange={handleSubCategoryWeightChange}
                       />
                     ))}
                   </div>
@@ -1033,6 +1130,7 @@ export default function MetricsComparison() {
         <PlayerCard
           player={playerCard}
           allEIScores={results?.allEIScores || []}
+          totalPlayers={results?.playerRankings.length || 0}
           onClose={() => setPlayerCard(null)}
         />
       )}

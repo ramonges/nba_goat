@@ -6,10 +6,11 @@ import factoryModule from "react-plotly.js/factory";
 import { ALL_PLAYERS } from "../lib/players";
 import {
   CATEGORY_GROUPS,
-  CATEGORIES,
+  DEFAULT_CATEGORY_WEIGHTS,
+  DEFAULT_SUBCATEGORY_WEIGHTS,
   fetchPlayerSeasonAverages,
   fetchSeasonData,
-  computeEIScores,
+  computeEIScoresHierarchical,
 } from "../lib/eiComputation";
 import "./WembyIndicator.css";
 
@@ -103,8 +104,8 @@ const CATEGORY_INFO = {
   "Playoff Production": { summary: "Overall playoff output", metrics: ["Playoff games", "Playoff PPG", "Playoff RPG", "Playoff APG", "Playoff Game Score"], direction: "Higher is better" },
   "Playoff Efficiency": { summary: "Shooting efficiency in playoffs", metrics: ["Playoff TS%", "Playoff eFG%", "Playoff FT%"], direction: "Higher is better" },
   "Playoff Consistency": { summary: "Stability in playoffs", metrics: ["Playoff bad-game rate", "Playoff Game Score CV"], direction: "Lower is better" },
-  "Awards Recognition": { summary: "League recognition through awards", metrics: ["MVP, All-NBA, All-Star (when available)"], direction: "Higher is better" },
-  "Championship Success": { summary: "Team success and rings", metrics: ["Championships, Finals appearances (when available)"], direction: "Higher is better" },
+  "Awards Recognition": { summary: "Individual league recognition", metrics: ["MVP, All-NBA, All-Defensive, All-Star, DPOY, POM, Olympic golds, HoF"], direction: "Higher is better" },
+  "Championship Success": { summary: "Rings and Finals MVP", metrics: ["NBA Champion, Finals MVP"], direction: "Higher is better" },
 };
 
 function InfoTooltip({ category }) {
@@ -183,12 +184,12 @@ export default function WembyIndicator() {
 
       setProgress("Computing EI scores...");
 
-      const weights = {};
-      for (const catName of Object.keys(CATEGORIES)) {
-        weights[catName] = 1.0;
-      }
-
-      const eiResults = computeEIScores(combined, weights, "all");
+      const eiResults = computeEIScoresHierarchical(
+        combined,
+        DEFAULT_CATEGORY_WEIGHTS,
+        DEFAULT_SUBCATEGORY_WEIGHTS,
+        "all"
+      );
       const { seasonScores } = eiResults;
 
       // Get rankings for the reference season only
