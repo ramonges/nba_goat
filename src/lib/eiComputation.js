@@ -827,7 +827,44 @@ function weightedRMS(scores, weights) {
   return totalWeight > 0 ? Math.sqrt(weightedSumSq / totalWeight) : 1;
 }
 
-// Group seasons by player, pick best (lowest-EI) seasons, build rankings.
+// Pick the consecutive season window with the lowest mean EI (best stretch).
+// If the career is shorter than the window, use all seasons as a single window.
+function pickBestSlidingWindow(seasons, windowSize) {
+  const chronological = [...seasons].sort((a, b) =>
+    a.season.localeCompare(b.season)
+  );
+
+  if (chronological.length === 0) {
+    return { selectedSeasons: [], careerEI: 1 };
+  }
+
+  if (windowSize === "all" || windowSize >= chronological.length) {
+    const careerEI =
+      chronological.reduce((sum, s) => sum + s.eiScore, 0) /
+      chronological.length;
+    return { selectedSeasons: chronological, careerEI };
+  }
+
+  let bestMean = Infinity;
+  let bestStart = 0;
+
+  for (let i = 0; i <= chronological.length - windowSize; i++) {
+    const window = chronological.slice(i, i + windowSize);
+    const mean =
+      window.reduce((sum, s) => sum + s.eiScore, 0) / windowSize;
+    if (mean < bestMean) {
+      bestMean = mean;
+      bestStart = i;
+    }
+  }
+
+  return {
+    selectedSeasons: chronological.slice(bestStart, bestStart + windowSize),
+    careerEI: bestMean,
+  };
+}
+
+// Group seasons by player, pick best consecutive window, build rankings.
 // `minGames` (optional) drops any player whose total games < threshold; useful
 // for the "all players" mode where role players on title rosters would
 // otherwise spike Championship / Legacy scores after only a handful of games.
@@ -843,23 +880,15 @@ function buildPlayerRankings(seasonScores, topYears, minGames = 0) {
   const playerRankings = [];
 
   for (const [name, seasons] of Object.entries(playerSeasons)) {
-    // Sort ascending: lowest EI = best season
-    const sorted = [...seasons].sort((a, b) => a.eiScore - b.eiScore);
+    const { selectedSeasons, careerEI } = pickBestSlidingWindow(
+      seasons,
+      topYears
+    );
 
-    let selectedSeasons;
-    if (topYears === "all" || topYears >= sorted.length) {
-      selectedSeasons = sorted;
-    } else {
-      selectedSeasons = sorted.slice(0, topYears);
-    }
-
-    const careerEI =
-      selectedSeasons.length > 0
-        ? selectedSeasons.reduce((sum, s) => sum + s.eiScore, 0) /
-          selectedSeasons.length
+    const peakEI =
+      seasons.length > 0
+        ? Math.min(...seasons.map((s) => s.eiScore))
         : 1;
-
-    const peakEI = sorted.length > 0 ? sorted[0].eiScore : 1;
     const totalSeasons = seasons.length;
     const totalGames = seasons.reduce((sum, s) => sum + s.games, 0);
 
@@ -988,4 +1017,23 @@ export function computeEIScoresHierarchical(
   );
 
   return { playerRankings, seasonScores, allEIScores, measureBounds };
+}
+
+/** Two career EI values tie when they display the same at 3 decimals. */
+export function eiScoresTied(a, b) {
+  return a.toFixed(3) === b.toFixed(3);
+}
+
+/**
+ * Assign display ranks with ties (1, 1, 3 …). Assumes players are already
+ * sorted best-first (lowest careerEI = rank 1).
+ */
+export function assignDisplayRanks(players) {
+  let currentRank = 1;
+  return players.map((player, i) => {
+    if (i > 0 && !eiScoresTied(player.careerEI, players[i - 1].careerEI)) {
+      currentRank = i + 1;
+    }
+    return { ...player, displayRank: currentRank };
+  });
 }

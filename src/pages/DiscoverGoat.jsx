@@ -11,6 +11,7 @@ import {
   MIN_GAMES_ALL_PLAYERS,
   fetchAllPlayersSeasonAverages,
   computeEIScoresHierarchical,
+  assignDisplayRanks,
 } from "../lib/eiComputation";
 import "./DiscoverGoat.css";
 
@@ -23,7 +24,7 @@ const TOP_YEARS_OPTIONS = [
   { value: "all", label: "All Seasons" },
   ...Array.from({ length: 15 }, (_, i) => ({
     value: i + 1,
-    label: `Top ${i + 1} season${i > 0 ? "s" : ""}`,
+    label: `${i + 1}-Year Window`,
   })),
 ];
 
@@ -201,7 +202,7 @@ export default function DiscoverGoat() {
 
   const top15 = useMemo(() => {
     if (!results) return [];
-    return results.playerRankings.slice(0, 15);
+    return assignDisplayRanks(results.playerRankings.slice(0, 15));
   }, [results]);
 
   return (
@@ -209,9 +210,9 @@ export default function DiscoverGoat() {
       <div className="controls-panel">
         <h2 className="controls-title">Discover the GOAT of the NBA</h2>
         <p className="controls-description">
-          Configure category weights, pick the player pool, and choose how many
-          top seasons to evaluate. The Excellence Index (EI) updates the ranking
-          live — lower is better.
+          Configure category weights, pick the player pool, and choose a
+          consecutive season window. Each player is scored on their best stretch
+          of that length (lowest mean EI). Lower is better.
         </p>
 
         <div className="goat-controls-layout">
@@ -367,16 +368,16 @@ export default function DiscoverGoat() {
             </div>
 
             <div className="goat-ranking-list">
-              {top15.map((player, idx) => (
+              {top15.map((player) => (
                 <div
                   key={player.player_name}
-                  className={`goat-rank-row ${idx === 0 ? "goat-rank-row--first" : ""}`}
+                  className={`goat-rank-row ${player.displayRank === 1 ? "goat-rank-row--first" : ""}`}
                   onClick={() =>
-                    setPlayerCard({ ...player, _rank: idx + 1 })
+                    setPlayerCard({ ...player, _rank: player.displayRank })
                   }
                 >
                   <div className="goat-rank-pos">
-                    {idx === 0 ? "👑" : idx + 1}
+                    {player.displayRank === 1 ? "👑" : player.displayRank}
                   </div>
                   <div className="goat-rank-info">
                     <span className="goat-rank-name">

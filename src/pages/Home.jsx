@@ -15,8 +15,8 @@ export default function Home() {
           <br />
           Compare careers, seasons, and performance under pressure.
         </p>
-        <Link to="/discover-goat" className="hero-cta">
-          Discover the GOAT of the NBA
+        <Link to="/create-goat-ranking" className="hero-cta">
+          The NBA GOAT Lab
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
             <path
               d="M3 8h10m0 0L9 4m4 4L9 12"
@@ -82,37 +82,12 @@ export default function Home() {
             </span>
           </Link>
 
-          <Link to="/discover-goat" className="tool-card">
-            <div className="tool-card-header">
-              <div className="tool-indicator" />
-              <span className="tool-badge">New</span>
-            </div>
-            <h3>Discover the GOAT of the NBA</h3>
-            <p>
-              Dynamic simulation dashboard — adjust weights in real-time and
-              watch the GOAT ranking update instantly. Your personal take on
-              who's the greatest.
-            </p>
-            <span className="tool-link">
-              Open
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-                <path
-                  d="M3 8h10m0 0L9 4m4 4L9 12"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            </span>
-          </Link>
-
           <Link to="/create-goat-ranking" className="tool-card">
             <div className="tool-card-header">
               <div className="tool-indicator" />
               <span className="tool-badge">New</span>
             </div>
-            <h3>Create Your Own GOAT Ranking</h3>
+            <h3>The NBA GOAT Lab</h3>
             <p>
               Build your own categories from scratch, drag sub-categories
               between them, and watch the ranking update live with your

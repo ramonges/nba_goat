@@ -6,9 +6,12 @@ import { ALL_PLAYERS } from "../lib/players";
 import {
   CATEGORY_GROUPS,
   CATEGORIES,
+  DEFAULT_CATEGORY_WEIGHTS,
+  DEFAULT_SUBCATEGORY_WEIGHTS,
   MIN_GAMES_ALL_PLAYERS,
   fetchAllPlayersSeasonAverages,
   computeEIScoresHierarchical,
+  assignDisplayRanks,
 } from "../lib/eiComputation";
 import "./DiscoverGoat.css";
 import "./CreateGoatRanking.css";
@@ -22,7 +25,7 @@ const TOP_YEARS_OPTIONS = [
   { value: "all", label: "All Seasons" },
   ...Array.from({ length: 15 }, (_, i) => ({
     value: i + 1,
-    label: `Top ${i + 1} season${i > 0 ? "s" : ""}`,
+    label: `${i + 1}-Year Window`,
   })),
 ];
 
@@ -84,6 +87,35 @@ const selectStyles = {
 // All sub-category names that exist in the library, used as the master pool.
 const ALL_SUBCATEGORIES = Object.keys(CATEGORIES);
 
+// Golden-angle hues so each new category gets a distinct color on dark UI.
+function getCategoryColor(colorIndex) {
+  const hue = (colorIndex * 137.508) % 360;
+  return {
+    main: `hsl(${hue}, 68%, 62%)`,
+    soft: `hsla(${hue}, 68%, 62%, 0.1)`,
+    border: `hsla(${hue}, 68%, 62%, 0.32)`,
+    glow: `hsla(${hue}, 68%, 62%, 0.22)`,
+  };
+}
+
+function initialCategoryColorMap() {
+  const map = {};
+  Object.keys(CATEGORY_GROUPS).forEach((cat, i) => {
+    map[cat] = i;
+  });
+  return map;
+}
+
+function categoryColorStyle(colorIndex) {
+  const c = getCategoryColor(colorIndex);
+  return {
+    "--cat-color": c.main,
+    "--cat-soft": c.soft,
+    "--cat-border": c.border,
+    "--cat-glow": c.glow,
+  };
+}
+
 // Build initial user state from the library defaults.
 function initialGroupsState() {
   const groups = {};
@@ -99,8 +131,9 @@ function initialCategoryOrder() {
 
 function initialCategoryWeights() {
   const cats = Object.keys(CATEGORY_GROUPS);
+  const equal = 1 / cats.length;
   const w = {};
-  for (const c of cats) w[c] = 1.0;
+  for (const c of cats) w[c] = equal;
   return w;
 }
 
@@ -110,6 +143,55 @@ function initialSubCategoryWeights() {
     for (const s of subs) w[s] = 1.0;
   }
   return w;
+}
+
+function buildUserCategoryGroups(categoryOrder, userGroups) {
+  const groups = {};
+  for (const c of categoryOrder) {
+    const subs = userGroups[c] || [];
+    if (subs.length > 0) groups[c] = subs;
+  }
+  return groups;
+}
+
+function GoatRankingList({ players, onSelectPlayer }) {
+  return (
+    <div className="goat-ranking-list">
+      {players.map((player) => (
+        <div
+          key={player.player_name}
+          className={`goat-rank-row ${player.displayRank === 1 ? "goat-rank-row--first" : ""}`}
+          onClick={() =>
+            onSelectPlayer({ ...player, _rank: player.displayRank })
+          }
+        >
+          <div className="goat-rank-pos">
+            {player.displayRank === 1 ? "👑" : player.displayRank}
+          </div>
+          <div className="goat-rank-info">
+            <span className="goat-rank-name">{player.player_name}</span>
+            <span className="goat-rank-meta">
+              {player.totalSeasons} seasons · {player.totalGames} games
+            </span>
+          </div>
+          <div className="goat-rank-scores">
+            <div className="goat-rank-ei">{player.careerEI.toFixed(3)}</div>
+            <div className="goat-rank-peak">
+              Peak: {player.peakEI.toFixed(3)}
+            </div>
+          </div>
+          <div className="goat-rank-bar-container">
+            <div
+              className="goat-rank-bar"
+              style={{
+                width: `${Math.max(5, (1 - player.careerEI) * 100)}%`,
+              }}
+            />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export default function CreateGoatRanking() {
@@ -125,6 +207,12 @@ export default function CreateGoatRanking() {
     initialSubCategoryWeights
   );
   const [newCategoryName, setNewCategoryName] = useState("");
+  const [categoryColorMap, setCategoryColorMap] = useState(
+    initialCategoryColorMap
+  );
+  const [nextColorIndex, setNextColorIndex] = useState(
+    () => Object.keys(CATEGORY_GROUPS).length
+  );
   // Draft buffer for category-name inputs. Without this we'd mutate
   // `categoryOrder` (and therefore React keys) on every keystroke, causing the
   // input to remount and lose focus after each typed character.
@@ -139,6 +227,7 @@ export default function CreateGoatRanking() {
   const [seasonData, setSeasonData] = useState(null);
   const [results, setResults] = useState(null);
   const [playerCard, setPlayerCard] = useState(null);
+  const [showComparison, setShowComparison] = useState(false);
 
   // ── Category / sub-category mutations ───────────────────────────────────
   const addCategory = useCallback(() => {
@@ -149,11 +238,19 @@ export default function CreateGoatRanking() {
       return;
     }
     setUserGroups((prev) => ({ ...prev, [raw]: [] }));
-    setCategoryOrder((prev) => [...prev, raw]);
-    setCategoryWeights((prev) => ({ ...prev, [raw]: 0 }));
+    const newOrder = [...categoryOrder, raw];
+    setCategoryOrder(newOrder);
+    setCategoryWeights(() => {
+      const equalWeight = 1 / newOrder.length;
+      const weights = {};
+      for (const c of newOrder) weights[c] = equalWeight;
+      return weights;
+    });
+    setCategoryColorMap((prev) => ({ ...prev, [raw]: nextColorIndex }));
+    setNextColorIndex((n) => n + 1);
     setNewCategoryName("");
     setError(null);
-  }, [newCategoryName, categoryOrder]);
+  }, [newCategoryName, categoryOrder, nextColorIndex]);
 
   const removeCategory = useCallback(
     (catName) => {
@@ -172,6 +269,11 @@ export default function CreateGoatRanking() {
       });
       setCategoryOrder((prev) => prev.filter((c) => c !== catName));
       setCategoryWeights((prev) => {
+        const next = { ...prev };
+        delete next[catName];
+        return next;
+      });
+      setCategoryColorMap((prev) => {
         const next = { ...prev };
         delete next[catName];
         return next;
@@ -199,6 +301,14 @@ export default function CreateGoatRanking() {
         prev.map((c) => (c === oldName ? trimmed : c))
       );
       setCategoryWeights((prev) => {
+        const next = { ...prev };
+        if (oldName in next) {
+          next[trimmed] = next[oldName];
+          delete next[oldName];
+        }
+        return next;
+      });
+      setCategoryColorMap((prev) => {
         const next = { ...prev };
         if (oldName in next) {
           next[trimmed] = next[oldName];
@@ -267,6 +377,8 @@ export default function CreateGoatRanking() {
     setCategoryOrder(initialCategoryOrder());
     setCategoryWeights(initialCategoryWeights());
     setSubCategoryWeights(initialSubCategoryWeights());
+    setCategoryColorMap(initialCategoryColorMap());
+    setNextColorIndex(Object.keys(CATEGORY_GROUPS).length);
     setError(null);
   }, []);
 
@@ -357,6 +469,7 @@ export default function CreateGoatRanking() {
     setResults(null);
     setSeasonData(null);
     setPlayerCard(null);
+    setShowComparison(false);
     try {
       const data = await fetchAllPlayersSeasonAverages(
         players,
@@ -374,38 +487,52 @@ export default function CreateGoatRanking() {
   }, [playerMode, selectedPlayers]);
 
   // ── Live recompute on every state change ────────────────────────────────
+  const userCategoryGroups = useMemo(
+    () => buildUserCategoryGroups(categoryOrder, userGroups),
+    [categoryOrder, userGroups]
+  );
+
   useEffect(() => {
     if (!seasonData || seasonData.length === 0) return;
-    // Build the user's category tree in display order; only include
-    // categories that actually contain at least one sub-category.
-    const groups = {};
-    for (const c of categoryOrder) {
-      const subs = userGroups[c] || [];
-      if (subs.length > 0) groups[c] = subs;
-    }
     const minGames = playerMode === "all" ? MIN_GAMES_ALL_PLAYERS : 0;
     const eiResults = computeEIScoresHierarchical(
       seasonData,
       normalizedCategoryWeights,
       normalizedSubCategoryWeights,
       topYears.value,
-      { minGames, categoryGroups: groups }
+      { minGames, categoryGroups: userCategoryGroups }
     );
     setResults(eiResults);
   }, [
     seasonData,
-    categoryOrder,
-    userGroups,
+    userCategoryGroups,
     normalizedCategoryWeights,
     normalizedSubCategoryWeights,
     topYears,
     playerMode,
   ]);
 
+  const defaultResults = useMemo(() => {
+    if (!seasonData || seasonData.length === 0) return null;
+    const minGames = playerMode === "all" ? MIN_GAMES_ALL_PLAYERS : 0;
+    return computeEIScoresHierarchical(
+      seasonData,
+      DEFAULT_CATEGORY_WEIGHTS,
+      DEFAULT_SUBCATEGORY_WEIGHTS,
+      topYears.value,
+      { minGames, categoryGroups: CATEGORY_GROUPS }
+    );
+  }, [seasonData, topYears, playerMode]);
+
   const top15 = useMemo(() => {
     if (!results) return [];
-    return results.playerRankings.slice(0, 15);
+    return assignDisplayRanks(results.playerRankings.slice(0, 15));
   }, [results]);
+
+  const defaultTop15 = useMemo(() => {
+    if (!defaultResults) return [];
+    return assignDisplayRanks(defaultResults.playerRankings.slice(0, 15));
+  }, [defaultResults]);
 
   // Track which sub-categories aren't in any user category so we can warn.
   const unassignedSubs = useMemo(() => {
@@ -417,13 +544,14 @@ export default function CreateGoatRanking() {
   }, [userGroups]);
 
   return (
-    <div className="goat-page">
+    <div className="goat-page create-goat-page">
       <div className="controls-panel">
-        <h2 className="controls-title">Create Your Own NBA GOAT Ranking</h2>
+        <h2 className="controls-title">The NBA GOAT Lab</h2>
         <p className="controls-description">
           Build your own categories and drag the available sub-categories into
           them. Category weights and sub-category weights are each normalized
-          to sum to 1. Lower EI = better.
+          to sum to 1. Rankings use each player&apos;s best consecutive season
+          window (lowest mean EI). Lower EI = better.
         </p>
 
         <div className="goat-controls-layout">
@@ -539,15 +667,18 @@ export default function CreateGoatRanking() {
                 const isTarget = dragTarget === cat;
                 const sharePct =
                   (normalizedCategoryWeights[cat] || 0) * 100;
+                const colorIndex = categoryColorMap[cat] ?? 0;
                 return (
                   <div
                     key={cat}
                     className={`builder-category ${isTarget ? "builder-category--drop" : ""}`}
+                    style={categoryColorStyle(colorIndex)}
                     onDragOver={(e) => onDragOver(e, cat)}
                     onDragLeave={(e) => onDragLeave(e, cat)}
                     onDrop={(e) => onDrop(e, cat)}
                   >
                     <div className="builder-category-header">
+                      <span className="builder-category-dot" aria-hidden />
                       <input
                         className="builder-category-name"
                         value={nameDrafts[cat] ?? cat}
@@ -590,7 +721,7 @@ export default function CreateGoatRanking() {
                           parseFloat(e.target.value)
                         )
                       }
-                      className="weight-slider-input weight-group-slider"
+                      className="weight-slider-input weight-group-slider builder-cat-slider"
                     />
 
                     <div className="builder-subs">
@@ -630,7 +761,7 @@ export default function CreateGoatRanking() {
                                   parseFloat(e.target.value)
                                 )
                               }
-                              className="weight-slider-input"
+                              className="weight-slider-input builder-sub-slider"
                             />
                           </div>
                         ))
@@ -673,52 +804,65 @@ export default function CreateGoatRanking() {
               <div>
                 <h3 className="result-card-title">Your GOAT Ranking</h3>
                 <p className="result-card-subtitle">
-                  Top 15 by career EI · lower is better · click a row for the
-                  player card
+                  {showComparison
+                    ? "Side-by-side comparison · lower EI is better · click a row for the player card"
+                    : "Top 15 by career EI · lower is better · click a row for the player card"}
                 </p>
               </div>
-              <span className="goat-ranking-badge">Live update</span>
+              <div className="result-card-header-actions">
+                {!showComparison && (
+                  <span className="goat-ranking-badge">Live update</span>
+                )}
+                <button
+                  type="button"
+                  className="compare-default-btn"
+                  onClick={() => setShowComparison((v) => !v)}
+                >
+                  {showComparison
+                    ? "Back to single ranking"
+                    : "Compare with default equally weighted ranking"}
+                </button>
+              </div>
             </div>
 
-            <div className="goat-ranking-list">
-              {top15.map((player, idx) => (
-                <div
-                  key={player.player_name}
-                  className={`goat-rank-row ${idx === 0 ? "goat-rank-row--first" : ""}`}
-                  onClick={() =>
-                    setPlayerCard({ ...player, _rank: idx + 1 })
-                  }
-                >
-                  <div className="goat-rank-pos">
-                    {idx === 0 ? "👑" : idx + 1}
+            {showComparison ? (
+              <div className="compare-rankings">
+                <div className="compare-ranking-panel">
+                  <div className="compare-ranking-panel-header">
+                    <h4 className="compare-ranking-panel-title">
+                      Default Equal Weights
+                    </h4>
+                    <p className="compare-ranking-panel-subtitle">
+                      Library categories · equal category &amp; sub-category
+                      weights
+                    </p>
                   </div>
-                  <div className="goat-rank-info">
-                    <span className="goat-rank-name">
-                      {player.player_name}
-                    </span>
-                    <span className="goat-rank-meta">
-                      {player.totalSeasons} seasons · {player.totalGames} games
-                    </span>
-                  </div>
-                  <div className="goat-rank-scores">
-                    <div className="goat-rank-ei">
-                      {player.careerEI.toFixed(3)}
-                    </div>
-                    <div className="goat-rank-peak">
-                      Peak: {player.peakEI.toFixed(3)}
-                    </div>
-                  </div>
-                  <div className="goat-rank-bar-container">
-                    <div
-                      className="goat-rank-bar"
-                      style={{
-                        width: `${Math.max(5, (1 - player.careerEI) * 100)}%`,
-                      }}
-                    />
-                  </div>
+                  <GoatRankingList
+                    players={defaultTop15}
+                    onSelectPlayer={setPlayerCard}
+                  />
                 </div>
-              ))}
-            </div>
+                <div className="compare-ranking-panel compare-ranking-panel--custom">
+                  <div className="compare-ranking-panel-header">
+                    <h4 className="compare-ranking-panel-title">
+                      Your Custom Weights
+                    </h4>
+                    <p className="compare-ranking-panel-subtitle">
+                      Your category tree · your weight sliders
+                    </p>
+                  </div>
+                  <GoatRankingList
+                    players={top15}
+                    onSelectPlayer={setPlayerCard}
+                  />
+                </div>
+              </div>
+            ) : (
+              <GoatRankingList
+                players={top15}
+                onSelectPlayer={setPlayerCard}
+              />
+            )}
           </div>
         </div>
       )}
@@ -730,6 +874,7 @@ export default function CreateGoatRanking() {
           totalPlayers={results?.playerRankings.length || 0}
           userGroups={userGroups}
           categoryOrder={categoryOrder}
+          categoryColorMap={categoryColorMap}
           onClose={() => setPlayerCard(null)}
         />
       )}
@@ -743,6 +888,7 @@ function PlayerCard({
   totalPlayers,
   userGroups,
   categoryOrder,
+  categoryColorMap,
   onClose,
 }) {
   if (!player) return null;
@@ -782,6 +928,19 @@ function PlayerCard({
   const sortedEI = [...allEIScores].sort((a, b) => a - b);
   const median =
     sortedEI.length > 0 ? sortedEI[Math.floor(sortedEI.length * 0.5)] : 0.5;
+
+  const groupBarColors = categoryOrder.map(
+    (group) => getCategoryColor(categoryColorMap[group] ?? 0).main
+  );
+
+  const subBarColors = Object.keys(catPercentiles).map((catName) => {
+    for (const group of categoryOrder) {
+      if ((userGroups[group] || []).includes(catName)) {
+        return getCategoryColor(categoryColorMap[group] ?? 0).main;
+      }
+    }
+    return "rgba(91,156,246,0.7)";
+  });
 
   return (
     <div className="player-card-overlay" onClick={onClose}>
@@ -888,7 +1047,7 @@ function PlayerCard({
                   orientation: "h",
                   y: Object.keys(groupPercentiles),
                   x: Object.values(groupPercentiles),
-                  marker: { color: "rgba(91,156,246,0.7)" },
+                  marker: { color: groupBarColors },
                   text: Object.values(groupPercentiles).map((v) =>
                     v.toFixed(1)
                   ),
@@ -926,7 +1085,7 @@ function PlayerCard({
                   orientation: "h",
                   y: Object.keys(catPercentiles),
                   x: Object.values(catPercentiles).map((v) => v ?? 0),
-                  marker: { color: "rgba(91,156,246,0.7)" },
+                  marker: { color: subBarColors },
                   text: Object.values(catPercentiles).map((v) =>
                     v != null ? v.toFixed(1) : "—"
                   ),

@@ -12,7 +12,10 @@ import {
   DEFAULT_SUBCATEGORY_WEIGHTS,
   fetchAllPlayersSeasonAverages,
   computeEIScoresHierarchical,
+  assignDisplayRanks,
 } from "../lib/eiComputation";
+import "./DiscoverGoat.css";
+import "./CreateGoatRanking.css";
 import "./MetricsComparison.css";
 
 const createPlotlyComponent = factoryModule.default || factoryModule;
@@ -24,7 +27,7 @@ const TOP_YEARS_OPTIONS = [
   { value: "all", label: "All Seasons" },
   ...Array.from({ length: 15 }, (_, i) => ({
     value: i + 1,
-    label: `Top ${i + 1} season${i > 0 ? "s" : ""}`,
+    label: `${i + 1}-Year Window`,
   })),
 ];
 
@@ -242,6 +245,36 @@ const CATEGORY_INFO = {
   },
 };
 
+function getCategoryColor(colorIndex) {
+  const hue = (colorIndex * 137.508) % 360;
+  return {
+    main: `hsl(${hue}, 68%, 62%)`,
+    soft: `hsla(${hue}, 68%, 62%, 0.1)`,
+    border: `hsla(${hue}, 68%, 62%, 0.32)`,
+    glow: `hsla(${hue}, 68%, 62%, 0.22)`,
+  };
+}
+
+function categoryColorStyle(colorIndex) {
+  const c = getCategoryColor(colorIndex);
+  return {
+    "--cat-color": c.main,
+    "--cat-soft": c.soft,
+    "--cat-border": c.border,
+    "--cat-glow": c.glow,
+  };
+}
+
+const CATEGORY_GROUP_ORDER = Object.keys(CATEGORY_GROUPS);
+
+const CATEGORY_TO_GROUP_INDEX = (() => {
+  const map = {};
+  CATEGORY_GROUP_ORDER.forEach((group, idx) => {
+    for (const cat of CATEGORY_GROUPS[group]) map[cat] = idx;
+  });
+  return map;
+})();
+
 function InfoTooltip({ category }) {
   const [show, setShow] = useState(false);
   const info = CATEGORY_INFO[category];
@@ -292,13 +325,13 @@ function InfoTooltip({ category }) {
 
 function WeightSlider({ category, value, share, onChange }) {
   return (
-    <div className="weight-slider">
-      <div className="weight-slider-header">
-        <span className="weight-slider-label">
+    <div className="builder-sub">
+      <div className="builder-sub-row">
+        <span className="builder-sub-name">
           {category}
           <InfoTooltip category={category} />
         </span>
-        <span className="weight-slider-value">
+        <span className="builder-sub-share">
           {(share * 100).toFixed(1)}%
         </span>
       </div>
@@ -309,7 +342,7 @@ function WeightSlider({ category, value, share, onChange }) {
         step="0.01"
         value={value}
         onChange={(e) => onChange(category, parseFloat(e.target.value))}
-        className="weight-slider-input"
+        className="weight-slider-input builder-sub-slider"
       />
     </div>
   );
@@ -358,6 +391,15 @@ function PlayerCard({ player, allEIScores, totalPlayers, onClose }) {
     sortedEI.length > 0
       ? sortedEI[Math.floor(sortedEI.length * 0.5)]
       : 0.5;
+
+  const groupBarColors = CATEGORY_GROUP_ORDER.map(
+    (_, i) => getCategoryColor(i).main
+  );
+
+  const subBarColors = Object.keys(catPercentiles).map(
+    (catName) =>
+      getCategoryColor(CATEGORY_TO_GROUP_INDEX[catName] ?? 0).main
+  );
 
   return (
     <div className="player-card-overlay" onClick={onClose}>
@@ -464,7 +506,7 @@ function PlayerCard({ player, allEIScores, totalPlayers, onClose }) {
                   orientation: "h",
                   y: Object.keys(groupPercentiles),
                   x: Object.values(groupPercentiles),
-                  marker: { color: "rgba(74,127,255,0.7)" },
+                  marker: { color: groupBarColors },
                   text: Object.values(groupPercentiles).map((v) =>
                     v.toFixed(1)
                   ),
@@ -499,7 +541,7 @@ function PlayerCard({ player, allEIScores, totalPlayers, onClose }) {
                   orientation: "h",
                   y: Object.keys(catPercentiles),
                   x: Object.values(catPercentiles).map((v) => v ?? 0),
-                  marker: { color: "rgba(74,127,255,0.7)" },
+                  marker: { color: subBarColors },
                   text: Object.values(catPercentiles).map((v) =>
                     v != null ? v.toFixed(1) : "—"
                   ),
@@ -778,7 +820,7 @@ export default function MetricsComparison() {
 
   const top15 = useMemo(() => {
     if (!results) return [];
-    return results.playerRankings.slice(0, 15);
+    return assignDisplayRanks(results.playerRankings.slice(0, 15));
   }, [results]);
 
   const graphData = useMemo(() => {
@@ -845,13 +887,13 @@ export default function MetricsComparison() {
   }, [results, showGraphic, graphicTopN, graphicMode]);
 
   return (
-    <div className="goat-page">
+    <div className="goat-page metrics-comparison-page">
       <div className="controls-panel">
         <h2 className="controls-title">NBA Metrics Player Comparison</h2>
         <p className="controls-description">
-          Configure metric weights, select players, and choose how many top
-          seasons to evaluate. The Excellence Index (EI) normalizes each metric
-          across the league, applies your weights, and ranks players.
+          Configure metric weights, select players, and choose a consecutive
+          season window. Each player is ranked by their best stretch of that
+          length (lowest mean EI). Lower is better.
         </p>
 
         <div className="goat-controls-layout">
@@ -907,16 +949,25 @@ export default function MetricsComparison() {
                 within each category
               </span>
             </div>
-            <div className="weights-groups">
-              {Object.entries(CATEGORY_GROUPS).map(([group, cats]) => (
-                <div key={group} className="weight-group">
-                  <div className="weight-group-header">
-                    <div className="weight-group-title">
-                      <span className="weight-group-label">{group}</span>
-                      <span className="weight-group-share">
-                        {(normalizedCategoryWeights[group] * 100).toFixed(1)}%
+            <div className="builder-grid">
+              {CATEGORY_GROUP_ORDER.map((group, groupIdx) => {
+                const cats = CATEGORY_GROUPS[group];
+                const sharePct =
+                  (normalizedCategoryWeights[group] || 0) * 100;
+                return (
+                  <div
+                    key={group}
+                    className="builder-category"
+                    style={categoryColorStyle(groupIdx)}
+                  >
+                    <div className="builder-category-header">
+                      <span className="builder-category-dot" aria-hidden />
+                      <span className="builder-category-title">{group}</span>
+                      <span className="builder-category-share">
+                        {sharePct.toFixed(1)}%
                       </span>
                     </div>
+
                     <input
                       type="range"
                       min="0"
@@ -929,22 +980,23 @@ export default function MetricsComparison() {
                           parseFloat(e.target.value)
                         )
                       }
-                      className="weight-slider-input weight-group-slider"
+                      className="weight-slider-input weight-group-slider builder-cat-slider"
                     />
+
+                    <div className="builder-subs">
+                      {cats.map((catName) => (
+                        <WeightSlider
+                          key={catName}
+                          category={catName}
+                          value={subCategoryWeights[catName]}
+                          share={normalizedSubCategoryWeights[catName]}
+                          onChange={handleSubCategoryWeightChange}
+                        />
+                      ))}
+                    </div>
                   </div>
-                  <div className="weight-group-sliders">
-                    {cats.map((catName) => (
-                      <WeightSlider
-                        key={catName}
-                        category={catName}
-                        value={subCategoryWeights[catName]}
-                        share={normalizedSubCategoryWeights[catName]}
-                        onChange={handleSubCategoryWeightChange}
-                      />
-                    ))}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </div>
@@ -1095,9 +1147,18 @@ export default function MetricsComparison() {
                   </tr>
                 </thead>
                 <tbody>
-                  {top15.map((player, idx) => (
-                    <tr key={player.player_name}>
-                      <td className="rank-cell">{idx + 1}</td>
+                  {top15.map((player) => (
+                    <tr
+                      key={player.player_name}
+                      className={
+                        player.displayRank === 1
+                          ? "ranking-row--first"
+                          : undefined
+                      }
+                    >
+                      <td className="rank-cell">
+                        {player.displayRank === 1 ? "👑" : player.displayRank}
+                      </td>
                       <td className="name-cell">{player.player_name}</td>
                       <td className="score-cell">
                         {player.careerEI.toFixed(3)}
@@ -1111,7 +1172,10 @@ export default function MetricsComparison() {
                         <button
                           className="card-btn"
                           onClick={() =>
-                            setPlayerCard({ ...player, _rank: idx + 1 })
+                            setPlayerCard({
+                              ...player,
+                              _rank: player.displayRank,
+                            })
                           }
                         >
                           Player Card

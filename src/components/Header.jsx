@@ -4,8 +4,8 @@ import "./Header.css";
 const NAV_ITEMS = [
   { path: "/stats-comparison", label: "Stats Distribution Comparison" },
   { path: "/metrics-comparison", label: "NBA Metrics Player Comparison" },
-  { path: "/discover-goat", label: "Discover the GOAT" },
-  { path: "/create-goat-ranking", label: "Create Your Own GOAT Ranking" },
+  { path: "/create-goat-ranking", label: "The NBA GOAT Lab" },
+  // { path: "/discover-goat", label: "Discover the GOAT" }, // hidden — keep for future use
   // { path: "/wemby-indicator", label: "Wemby Indicator" }, // hidden — keep for future use
 ];
 
