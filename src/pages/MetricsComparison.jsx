@@ -898,8 +898,8 @@ export default function MetricsComparison() {
 
         <div className="goat-controls-layout">
           <div className="goat-left-controls">
-            <div className="control-group">
-              <label className="control-label">Player Selection</label>
+            <div className="lab-control-card">
+              <label className="lab-control-label">Player Selection</label>
               <div className="player-mode-toggle">
                 <button
                   className={`mode-btn ${playerMode === "all" ? "mode-btn--active" : ""}`}
@@ -930,8 +930,8 @@ export default function MetricsComparison() {
               )}
             </div>
 
-            <div className="control-group">
-              <label className="control-label">Top Years Window</label>
+            <div className="lab-control-card">
+              <label className="lab-control-label">Top Years Window</label>
               <Select
                 options={TOP_YEARS_OPTIONS}
                 value={topYears}
@@ -942,12 +942,12 @@ export default function MetricsComparison() {
           </div>
 
           <div className="goat-right-controls">
-            <div className="weights-header">
-              <label className="control-label">Category Weights</label>
-              <span className="weights-hint-inline">
+            <div className="lab-builder-header">
+              <h3 className="lab-builder-title">Category Weights</h3>
+              <p className="lab-builder-hint">
                 Category weights sum to 1 · sub-category weights sum to 1
                 within each category
-              </span>
+              </p>
             </div>
             <div className="builder-grid">
               {CATEGORY_GROUP_ORDER.map((group, groupIdx) => {

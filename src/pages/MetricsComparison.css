@@ -6,6 +6,67 @@
   width: 100%;
 }
 
+/* ─── Metrics page layout (matches GOAT Lab) ─────────────────────────────── */
+.metrics-comparison-page .controls-title {
+  color: #ffffff;
+}
+
+.metrics-comparison-page .controls-description {
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 0.82rem;
+  line-height: 1.55;
+}
+
+.metrics-comparison-page .lab-control-card {
+  background: var(--bg-elevated);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.metrics-comparison-page .lab-control-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: #ffffff;
+  margin: 0;
+}
+
+.metrics-comparison-page .lab-builder-header {
+  margin-bottom: 14px;
+}
+
+.metrics-comparison-page .lab-builder-title {
+  margin: 0 0 6px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: #ffffff;
+}
+
+.metrics-comparison-page .lab-builder-hint {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.metrics-comparison-page .player-mode-toggle {
+  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.metrics-comparison-page .mode-btn--active {
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+}
+
 .goat-controls-layout {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -55,19 +116,6 @@
 }
 
 /* Weight sliders — page-specific overrides only */
-.weights-header {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-bottom: 4px;
-}
-
-.weights-hint-inline {
-  font-size: 0.7rem;
-  color: var(--text-secondary);
-  opacity: 0.8;
-}
-
 .metrics-comparison-page .builder-sub {
   cursor: default;
 }

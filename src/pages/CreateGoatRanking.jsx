@@ -556,8 +556,8 @@ export default function CreateGoatRanking() {
 
         <div className="goat-controls-layout">
           <div className="goat-left-controls">
-            <div className="control-group">
-              <label className="control-label">Player Selection</label>
+            <div className="lab-control-card">
+              <label className="lab-control-label">Player Selection</label>
               <div className="player-mode-toggle">
                 <button
                   className={`mode-btn ${playerMode === "all" ? "mode-btn--active" : ""}`}
@@ -592,8 +592,8 @@ export default function CreateGoatRanking() {
               )}
             </div>
 
-            <div className="control-group">
-              <label className="control-label">Top Years Window</label>
+            <div className="lab-control-card">
+              <label className="lab-control-label">Top Years Window</label>
               <Select
                 options={TOP_YEARS_OPTIONS}
                 value={topYears}
@@ -610,8 +610,8 @@ export default function CreateGoatRanking() {
               </span>
             </div>
 
-            <div className="control-group">
-              <label className="control-label">Your Categories</label>
+            <div className="lab-control-card">
+              <label className="lab-control-label">Your Categories</label>
               <div className="builder-actions">
                 <input
                   className="builder-name-input"
@@ -652,13 +652,13 @@ export default function CreateGoatRanking() {
           </div>
 
           <div className="goat-right-controls">
-            <div className="weights-header">
-              <label className="control-label">Category Builder</label>
-              <span className="weights-hint-inline">
+            <div className="lab-builder-header">
+              <h3 className="lab-builder-title">Category Builder</h3>
+              <p className="lab-builder-hint">
                 Drag a sub-category card onto another category to move it.
                 Category weights sum to 1 · sub-categories sum to 1 within
                 each category.
-              </span>
+              </p>
             </div>
 
             <div className="builder-grid">
