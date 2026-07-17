@@ -12,7 +12,9 @@ import {
   DEFAULT_SUBCATEGORY_WEIGHTS,
   fetchAllPlayersSeasonAverages,
   computeEIScoresHierarchical,
+  computeEIScoresByEra,
   assignDisplayRanks,
+  decadeLabel,
 } from "../lib/eiComputation";
 import "./DiscoverGoat.css";
 import "./CreateGoatRanking.css";
@@ -348,13 +350,23 @@ function WeightSlider({ category, value, share, onChange }) {
   );
 }
 
-function PlayerCard({ player, allEIScores, totalPlayers, onClose }) {
+function PlayerCard({ player, allEIScores, totalPlayers, eiMode, onClose }) {
   if (!player) return null;
+
+  const isEra = eiMode === "era";
 
   const bestSeason = player.allSeasons.reduce(
     (best, s) => (s.eiScore < best.eiScore ? s : best),
     player.allSeasons[0]
   );
+
+  // Minutes distribution across decades (era mode only), sorted chronologically.
+  const decadeMix = isEra
+    ? Object.entries(player.minutesByDecade || {})
+        .map(([dk, mins]) => ({ dk: Number(dk), mins }))
+        .sort((a, b) => a.dk - b.dk)
+    : [];
+  const totalMixMinutes = decadeMix.reduce((a, d) => a + d.mins, 0) || 1;
 
   const playerEI = player.peakEI;
   const percentile =
@@ -406,8 +418,8 @@ function PlayerCard({ player, allEIScores, totalPlayers, onClose }) {
       <div className="player-card" onClick={(e) => e.stopPropagation()}>
         <div className="player-card-header">
           <h3>
-            EI Framework: {player.player_name} · Best Season (
-            {bestSeason.season})
+            EI Framework: {player.player_name} ·{" "}
+            {isEra ? bestSeason.season : `Best Season (${bestSeason.season})`}
           </h3>
           <button className="player-card-close" onClick={onClose}>
             &times;
@@ -416,11 +428,21 @@ function PlayerCard({ player, allEIScores, totalPlayers, onClose }) {
 
         <div className="player-card-top">
           <div className="player-card-info-box">
+            {isEra ? (
+              <div className="info-line">
+                <strong>Era:</strong> {decadeLabel(player.primaryDecade)}
+              </div>
+            ) : (
+              <div className="info-line">
+                <strong>Best Season:</strong> {bestSeason.season}
+              </div>
+            )}
             <div className="info-line">
-              <strong>Best Season:</strong> {bestSeason.season}
+              <strong>{isEra ? "Era-Relative EI:" : "Career EI:"}</strong>{" "}
+              {player.careerEI.toFixed(5)}
             </div>
             <div className="info-line">
-              <strong>EI:</strong> {playerEI.toFixed(3)}
+              <strong>Peak EI:</strong> {playerEI.toFixed(5)}
             </div>
             <div className="info-line">
               <strong>EI Percentile:</strong> {percentile}th
@@ -428,6 +450,36 @@ function PlayerCard({ player, allEIScores, totalPlayers, onClose }) {
             <div className="info-line">
               <strong>Rank:</strong> {rank}/{totalPlayers}
             </div>
+            {isEra && decadeMix.length > 0 && (
+              <div className="era-minutes-mix">
+                <div className="era-minutes-mix-label">Minutes by decade</div>
+                <div className="era-minutes-bar">
+                  {decadeMix.map((d) => (
+                    <div
+                      key={d.dk}
+                      className="era-minutes-seg"
+                      style={{
+                        width: `${(d.mins / totalMixMinutes) * 100}%`,
+                        background: getCategoryColor(d.dk % 9).main,
+                      }}
+                      title={`${decadeLabel(d.dk)}: ${Math.round(d.mins)} min`}
+                    />
+                  ))}
+                </div>
+                <div className="era-minutes-legend">
+                  {decadeMix.map((d) => (
+                    <span key={d.dk} className="era-minutes-legend-item">
+                      <span
+                        className="era-minutes-legend-dot"
+                        style={{ background: getCategoryColor(d.dk % 9).main }}
+                      />
+                      {decadeLabel(d.dk)}{" "}
+                      {Math.round((d.mins / totalMixMinutes) * 100)}%
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="player-card-dist">
@@ -713,6 +765,10 @@ export default function MetricsComparison() {
     ...DEFAULT_SUBCATEGORY_WEIGHTS,
   }));
   const [topYears, setTopYears] = useState(TOP_YEARS_OPTIONS[0]);
+  // "all_time" = normalize vs the whole distribution.
+  // "era"      = normalize each player vs the players of his own decade(s).
+  const [eiMode, setEiMode] = useState("all_time");
+  const [eraDecadeFilter, setEraDecadeFilter] = useState("all");
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState("");
   const [error, setError] = useState(null);
@@ -802,38 +858,87 @@ export default function MetricsComparison() {
   useEffect(() => {
     if (!seasonData || seasonData.length === 0) return;
     const minGames = playerMode === "all" ? MIN_GAMES_ALL_PLAYERS : 0;
-    const eiResults = computeEIScoresHierarchical(
-      seasonData,
-      normalizedCategoryWeights,
-      normalizedSubCategoryWeights,
-      topYears.value,
-      { minGames }
-    );
+    const eiResults =
+      eiMode === "era"
+        ? computeEIScoresByEra(
+            seasonData,
+            normalizedCategoryWeights,
+            normalizedSubCategoryWeights,
+            { minGames }
+          )
+        : computeEIScoresHierarchical(
+            seasonData,
+            normalizedCategoryWeights,
+            normalizedSubCategoryWeights,
+            topYears.value,
+            { minGames }
+          );
     setResults(eiResults);
   }, [
     seasonData,
+    eiMode,
     normalizedCategoryWeights,
     normalizedSubCategoryWeights,
     topYears,
     playerMode,
   ]);
 
+  // Decade options for the era leaderboard filter. "All eras" = career-blended;
+  // each decade = a separate ranking of that decade's performances.
+  const eraDecadeOptions = useMemo(() => {
+    if (eiMode !== "era" || !results?.decadeRankings) return [];
+    const opts = Object.entries(results.decadeRankings)
+      .map(([dk, r]) => ({ dk: Number(dk), n: r.players.length }))
+      .sort((a, b) => a.dk - b.dk)
+      .map(({ dk, n }) => ({ value: dk, label: `${decadeLabel(dk)} (${n})` }));
+    return [{ value: "all", label: "All eras" }, ...opts];
+  }, [eiMode, results]);
+
+  // Pick the ranking source: blended career list, or the selected decade's list.
+  const rankingsFor = useCallback(
+    (res) => {
+      if (!res) return [];
+      if (eiMode === "era" && eraDecadeFilter !== "all") {
+        return res.decadeRankings?.[eraDecadeFilter]?.players ?? [];
+      }
+      return res.playerRankings;
+    },
+    [eiMode, eraDecadeFilter]
+  );
+
   const top15 = useMemo(() => {
     if (!results) return [];
-    return assignDisplayRanks(results.playerRankings.slice(0, 15));
-  }, [results]);
+    return assignDisplayRanks(rankingsFor(results).slice(0, 15));
+  }, [results, rankingsFor]);
+
+  // EI distribution + player count for the currently displayed ranking (used by
+  // the player card so its histogram/percentile match the visible list).
+  const activeEIContext = useMemo(() => {
+    if (
+      eiMode === "era" &&
+      eraDecadeFilter !== "all" &&
+      results?.decadeRankings
+    ) {
+      const r = results.decadeRankings[eraDecadeFilter];
+      return {
+        allEIScores: r?.allEIScores ?? [],
+        totalPlayers: r?.players.length ?? 0,
+      };
+    }
+    return {
+      allEIScores: results?.allEIScores ?? [],
+      totalPlayers: results?.playerRankings.length ?? 0,
+    };
+  }, [eiMode, eraDecadeFilter, results]);
 
   const graphData = useMemo(() => {
     if (!results || !showGraphic) return null;
 
-    const topPlayers = results.playerRankings
-      .slice(0, graphicTopN)
-      .map((p) => p.player_name);
+    const ranking = rankingsFor(results);
+    const topPlayers = ranking.slice(0, graphicTopN).map((p) => p.player_name);
 
     const traces = topPlayers.map((name, idx) => {
-      const player = results.playerRankings.find(
-        (p) => p.player_name === name
-      );
+      const player = ranking.find((p) => p.player_name === name);
 
       if (graphicMode === "overlay") {
         const chronological = [...player.selectedSeasons].sort((a, b) =>
@@ -871,12 +976,12 @@ export default function MetricsComparison() {
     });
 
     return traces;
-  }, [results, showGraphic, graphicTopN, graphicMode]);
+  }, [results, showGraphic, graphicTopN, graphicMode, rankingsFor]);
 
   const graphXCategories = useMemo(() => {
     if (!results || !showGraphic || graphicMode !== "seasons") return null;
 
-    const topPlayers = results.playerRankings.slice(0, graphicTopN);
+    const topPlayers = rankingsFor(results).slice(0, graphicTopN);
     const allSeasons = new Set();
     for (const player of topPlayers) {
       for (const s of player.selectedSeasons) {
@@ -884,7 +989,7 @@ export default function MetricsComparison() {
       }
     }
     return [...allSeasons].sort();
-  }, [results, showGraphic, graphicTopN, graphicMode]);
+  }, [results, showGraphic, graphicTopN, graphicMode, rankingsFor]);
 
   return (
     <div className="goat-page metrics-comparison-page">
@@ -931,14 +1036,74 @@ export default function MetricsComparison() {
             </div>
 
             <div className="lab-control-card">
-              <label className="lab-control-label">Top Years Window</label>
-              <Select
-                options={TOP_YEARS_OPTIONS}
-                value={topYears}
-                onChange={setTopYears}
-                styles={selectStyles}
-              />
+              <label className="lab-control-label">EI Normalization</label>
+              <div className="player-mode-toggle">
+                <button
+                  className={`mode-btn ${eiMode === "all_time" ? "mode-btn--active" : ""}`}
+                  onClick={() => {
+                    setEiMode("all_time");
+                    setEraDecadeFilter("all");
+                  }}
+                >
+                  All Selection
+                </button>
+                <button
+                  className={`mode-btn ${eiMode === "era" ? "mode-btn--active" : ""}`}
+                  onClick={() => {
+                    setEiMode("era");
+                    setEraDecadeFilter("all");
+                  }}
+                >
+                  Era by Era
+                </button>
+              </div>
+              <span className="control-hint">
+                {eiMode === "era"
+                  ? "Each player is scored against the players of his own decade(s) (60s–20s). Dominance relative to his contemporaries, not raw output."
+                  : "Each player is scored against the whole all-time distribution."}
+              </span>
             </div>
+
+            {eiMode === "all_time" && (
+              <div className="lab-control-card">
+                <label className="lab-control-label">Top Years Window</label>
+                <Select
+                  options={TOP_YEARS_OPTIONS}
+                  value={topYears}
+                  onChange={setTopYears}
+                  styles={selectStyles}
+                />
+              </div>
+            )}
+
+            {eiMode === "era" && (
+              <div className="lab-control-card">
+                <label className="lab-control-label">Decade</label>
+                <Select
+                  options={eraDecadeOptions}
+                  value={
+                    eraDecadeOptions.find(
+                      (o) => String(o.value) === String(eraDecadeFilter)
+                    ) || null
+                  }
+                  onChange={(opt) =>
+                    setEraDecadeFilter(opt ? opt.value : "all")
+                  }
+                  styles={selectStyles}
+                  isDisabled={eraDecadeOptions.length === 0}
+                  placeholder={
+                    eraDecadeOptions.length === 0
+                      ? "Load players first…"
+                      : "All eras…"
+                  }
+                />
+                <span className="control-hint">
+                  &ldquo;All eras&rdquo; ranks each player&apos;s full career.
+                  Pick a decade to rank players by how they performed in that
+                  decade only — a player who spanned decades appears in each.
+                </span>
+              </div>
+            )}
           </div>
 
           <div className="goat-right-controls">
@@ -1026,10 +1191,12 @@ export default function MetricsComparison() {
 
       {results && (
         <div className="results-section">
-          <LeagueDistributionChart
-            seasonScores={results.seasonScores}
-            topYears={topYears}
-          />
+          {eiMode === "all_time" && (
+            <LeagueDistributionChart
+              seasonScores={results.seasonScores}
+              topYears={topYears}
+            />
+          )}
 
           <div className="result-card">
             <div className="result-card-header">
@@ -1038,7 +1205,11 @@ export default function MetricsComparison() {
                   Ranking Best NBA Players
                 </h3>
                 <p className="result-card-subtitle">
-                  Top 15 by career EI (lower = better)
+                  {eiMode === "era"
+                    ? eraDecadeFilter === "all"
+                      ? "Era-relative career EI · top 15 · lower = better"
+                      : `${decadeLabel(Number(eraDecadeFilter))} performances · top 15 · lower = better`
+                    : "Top 15 by career EI (lower = better)"}
                 </p>
               </div>
               <button
@@ -1193,8 +1364,9 @@ export default function MetricsComparison() {
       {playerCard && (
         <PlayerCard
           player={playerCard}
-          allEIScores={results?.allEIScores || []}
-          totalPlayers={results?.playerRankings.length || 0}
+          allEIScores={activeEIContext.allEIScores}
+          totalPlayers={activeEIContext.totalPlayers}
+          eiMode={eiMode}
           onClose={() => setPlayerCard(null)}
         />
       )}

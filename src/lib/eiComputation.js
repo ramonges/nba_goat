@@ -1019,9 +1019,16 @@ export function computeEIScoresHierarchical(
   return { playerRankings, seasonScores, allEIScores, measureBounds };
 }
 
-/** Two career EI values tie when they display the same at 3 decimals. */
+/**
+ * Two career EI values tie only when equal to within a tight numeric tolerance.
+ * The leaderboard shows EI rounded to 3 decimals, but ranking on the rounded
+ * value makes players who differ only at the 4th–5th decimal (common when
+ * weighting heavily on Championship Success, where EIs are tiny) share a rank
+ * and the crown. Comparing the raw values gives a single winner whenever the
+ * players are actually distinct; only genuinely identical résumés still tie.
+ */
 export function eiScoresTied(a, b) {
-  return a.toFixed(3) === b.toFixed(3);
+  return Math.abs(a - b) < 1e-9;
 }
 
 /**
@@ -1036,4 +1043,492 @@ export function assignDisplayRanks(players) {
     }
     return { ...player, displayRank: currentRank };
   });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// By-Era EI — normalize each player against the distribution of HIS OWN ERA
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// IDENTICAL pipeline to All-Time — the ONLY difference is which distribution a
+// season is normalized against:
+//   • normalize each SEASON's measures via the same sigmoid (10th/90th pct)
+//   • Step 2: RMS sub-category → weighted RMS category → weighted RMS EI → one
+//     EI per season (with the Legacy override)
+//   • roll up a career/decade by AVERAGING the per-season EIs (equal weight)
+//
+// All-Time bounds each measure over ALL player-seasons. Era bounds it PER DECADE
+// over the seasons of players who logged >= ERA_DECADE_GAMES_FLOOR games in that
+// decade, so every player is judged against his contemporaries. A player's:
+//   • decade EI  = average of his per-season EIs within that decade
+//   • "all eras" EI = average of his per-season EIs across the whole career,
+//     each season judged vs its own decade
+// A player appears in every decade where he cleared the games floor.
+
+const PRE_1960_BUCKET = "Pre-1960";
+
+// A player enters a decade's distribution / ranking only if his TOTAL games
+// across his seasons in that decade reach this floor. Keeps fringe/cup-of-coffee
+// decade stints from distorting a thin era's percentiles, and mirrors the 200
+// career-games rule used for the all-time leaderboard.
+const ERA_DECADE_GAMES_FLOOR = 200;
+
+/** End year of a "YYYY-YY" season string (1999-00 → 2000, 1985-86 → 1986). */
+export function seasonEndYear(season) {
+  if (season == null) return null;
+  const str = String(season).trim();
+  const m = str.match(/^(\d{4})-(\d{2})$/);
+  if (m) {
+    const start = parseInt(m[1], 10);
+    const suffix = parseInt(m[2], 10);
+    let end = Math.floor(start / 100) * 100 + suffix;
+    if (end < start) end += 100; // century rollover (1999-00 → 2000)
+    return end;
+  }
+  const y = parseInt(str.slice(0, 4), 10);
+  return isNaN(y) ? null : y;
+}
+
+/** decade_key = floor(end_year / 10) * 10 (1995-96 → 1996 → 1990). */
+export function seasonDecadeKey(season) {
+  const end = seasonEndYear(season);
+  if (end == null) return null;
+  if (end < 1960) return PRE_1960_BUCKET;
+  return Math.floor(end / 10) * 10;
+}
+
+export function decadeLabel(decadeKey) {
+  if (decadeKey === PRE_1960_BUCKET) return "Pre-1960";
+  const now = new Date().getFullYear();
+  if (Number(decadeKey) === Math.floor(now / 10) * 10) {
+    return `${decadeKey}s (so far)`;
+  }
+  return `${decadeKey}s`;
+}
+
+// Every measure → its category's direction ("higher"/"lower is better").
+const MEASURE_DIRECTION = (() => {
+  const d = {};
+  for (const cat of Object.values(CATEGORIES)) {
+    for (const m of cat.measures) d[m] = cat.direction;
+  }
+  return d;
+})();
+
+// Non-Legacy measures participate in era normalization; Legacy (rings, MVPs …)
+// is cumulative and handled by the shared career/decade legacy override.
+const ERA_MEASURES = (() => {
+  const legacy = new Set(legacyMeasureNames());
+  const names = new Set();
+  for (const cat of Object.values(CATEGORIES)) {
+    for (const m of cat.measures) if (!legacy.has(m)) names.add(m);
+  }
+  return [...names];
+})();
+
+// ─── Stat tracking eras ──────────────────────────────────────────────────────
+// Several stats did not exist league-wide in early decades, and the source rows
+// can even contain bogus values for them (e.g. ABA-era 3P attributed to a 1970s
+// NBA line). We must never rank a stat in a decade where the rule didn't exist,
+// regardless of what's in the table. Each measure maps to the earliest decade
+// the NBA tracked it for the FULL decade; earlier decades get a null baseline,
+// so the component is dropped and the EI weights renormalize (never imputed).
+//   3PM/3PA/3P%          first 1979-80  → from the 1980s
+//   Steals/Blocks        first 1973-74  → 70s partial → from the 1980s
+//   ORB/DRB split        first 1973-74  → 70s partial → from the 1980s
+//   Turnovers (+AST/TOV) first 1977-78  → 70s ~2 seasons → from the 1980s
+const STAT_FIRST_DECADE = {
+  three_point_pct: 1980,
+  threes_made_per_game: 1980,
+  steals_per_game: 1980,
+  steals_per36: 1980,
+  blocks_per_game: 1980,
+  blocks_per36: 1980,
+  stocks_per_game: 1980,
+  stocks_per36: 1980,
+  offensive_rebounds_per_game: 1980,
+  offensive_rebounds_per36: 1980,
+  defensive_rebounds_per_game: 1980,
+  defensive_rebounds_per36: 1980,
+  turnovers_per_game: 1980,
+  turnovers_per36: 1980,
+  ast_tov_ratio: 1980,
+  // Legacy: the Finals MVP award was first given in 1969, so it did not exist
+  // for the 1960s decade. Only meaningful from the 1970s onward — drop it for
+  // the 60s so it can't inject a flat, non-differentiating score.
+  nba_finals_most_valuable_player: 1970,
+};
+
+function statTrackedInDecade(measure, decadeKey) {
+  if (decadeKey === PRE_1960_BUCKET) return false;
+  const first = STAT_FIRST_DECADE[measure];
+  return first == null || Number(decadeKey) >= first;
+}
+
+// 10th/90th-percentile bounds over a raw value array (same recipe/anchors as the
+// All-Time computeMeasureBounds); returns null when fewer than 5 observations.
+function percentileBounds(rawValues) {
+  const values = rawValues
+    .filter((v) => v != null && !isNaN(v) && isFinite(v))
+    .sort((a, b) => a - b);
+  const n = values.length;
+  if (n < 5) return null;
+  const minIdx = Math.floor(n * SIGMOID_ALPHA);
+  const maxIdx = Math.floor(n * (1 - SIGMOID_ALPHA));
+  let minVal = values[minIdx];
+  let maxVal = values[maxIdx];
+  if (Math.abs(maxVal - minVal) < 1e-9) {
+    minVal = values[0];
+    maxVal = values[n - 1];
+  }
+  if (Math.abs(maxVal - minVal) < 1e-9) {
+    minVal -= 1e-6;
+    maxVal += 1e-6;
+  }
+  return { minVal, maxVal, nObs: n };
+}
+
+// Single measure → sigmoid [0,1] score (identical transform to Step 1), with
+// direction applied. Returns null for missing values or missing bounds.
+function normalizeMeasureScore(val, bounds, direction) {
+  if (val == null || isNaN(val) || !isFinite(val) || !bounds) return null;
+  const { minVal, maxVal } = bounds;
+  const span = maxVal - minVal;
+  let mHat =
+    SIGMOID_X_C + ((SIGMOID_X_D - SIGMOID_X_C) / span) * (val - minVal);
+  mHat = Math.max(-50, Math.min(50, mHat));
+  const mTilde = 1 / (1 + Math.exp(-mHat));
+  return direction === "higher" ? 1 - mTilde : mTilde;
+}
+
+// Sub-category score = RMS of its already-normalized [0,1] measure scores.
+function subCatScoresFromMeasureScores(measureScores) {
+  const out = {};
+  for (const [catName, cat] of Object.entries(CATEGORIES)) {
+    const arr = [];
+    for (const m of cat.measures) {
+      const sc = measureScores[m];
+      if (sc == null) continue;
+      arr.push(sc);
+    }
+    out[catName] =
+      arr.length === 0
+        ? null
+        : Math.sqrt(arr.reduce((s, v) => s + v * v, 0) / arr.length);
+  }
+  return out;
+}
+
+// Per-decade 10th/90th-percentile anchors over the SEASONS of players who cleared
+// the decade games floor. Stats untracked in a decade are forced null (dropped),
+// so the component is dropped and the EI weights renormalize (never imputed).
+//   seasonsByDecade: Map(decadeKey → array of season objects)
+function computeEraBaselines(seasonsByDecade) {
+  const baselines = {};
+  for (const [dk, seasons] of seasonsByDecade) {
+    const b = {};
+    for (const m of ERA_MEASURES) {
+      b[m] = statTrackedInDecade(m, dk)
+        ? percentileBounds(seasons.map((s) => s[m]))
+        : null;
+    }
+    baselines[dk] = b;
+  }
+  return baselines;
+}
+
+// Career-cumulative Legacy, but scoped PER DECADE: rings/MVPs/etc. earned within
+// each decade, percentile-normalized against that decade's players. Used by the
+// per-decade rankings so a player's 2020s entry reflects 2020s honors, not his
+// whole career. Returns { [decadeKey]: { [player]: legacySubScores } }.
+function computeDecadeLegacyScores(seasonData) {
+  const measures = legacyMeasureNames();
+  const byDecade = {};
+  for (const s of seasonData) {
+    const dk = seasonDecadeKey(s.season);
+    if (dk == null || dk === PRE_1960_BUCKET) continue;
+    if (!byDecade[dk]) byDecade[dk] = {};
+    const pool = byDecade[dk];
+    if (!pool[s.player_name]) {
+      pool[s.player_name] = { player_name: s.player_name };
+      for (const m of measures) pool[s.player_name][m] = 0;
+    }
+    const c = pool[s.player_name];
+    for (const m of measures) {
+      const v = s[m];
+      if (v == null || isNaN(v) || !isFinite(v)) continue;
+      if (LEGACY_MAX_MEASURES.has(m)) {
+        if (v > c[m]) c[m] = v;
+      } else {
+        c[m] += v;
+      }
+    }
+  }
+  const out = {};
+  for (const dk of Object.keys(byDecade)) {
+    const arr = Object.values(byDecade[dk]);
+    const bounds = computeCareerLegacyBounds(arr);
+    // Drop legacy awards that didn't exist in this decade (e.g. Finals MVP in
+    // the 1960s) so they don't contribute a flat, non-differentiating score.
+    for (const m of measures) {
+      if (!statTrackedInDecade(m, Number(dk))) bounds[m] = null;
+    }
+    out[dk] = {};
+    for (const row of arr) {
+      out[dk][row.player_name] = computeLegacySubScoresFor(row, bounds);
+    }
+  }
+  return out;
+}
+
+// Shared Step 2 for the era paths: sub-category RMS → Legacy override → weighted
+// RMS category → weighted RMS EI. `legacySubScores` is the (career or per-decade)
+// Legacy override for this player. Returns null-safe scores + an eligibility flag.
+function eraStep2(
+  measureScores,
+  categoryWeights,
+  subCategoryWeights,
+  groups,
+  legacySubScores
+) {
+  const subCategoryScores = subCatScoresFromMeasureScores(measureScores);
+  if (legacySubScores) {
+    for (const sc of CATEGORY_GROUPS.Legacy ?? []) {
+      if (legacySubScores[sc] !== undefined) {
+        subCategoryScores[sc] = legacySubScores[sc];
+      }
+    }
+  }
+  const categoryGroupScores = {};
+  for (const [group, subCats] of Object.entries(groups)) {
+    const groupScores = {};
+    for (const subCat of subCats) groupScores[subCat] = subCategoryScores[subCat];
+    const hasAny = subCats.some((c) => subCategoryScores[c] != null);
+    categoryGroupScores[group] = hasAny
+      ? weightedRMS(groupScores, subCategoryWeights)
+      : null;
+  }
+  // Eligible only if something the user actually weighted is available.
+  const hasScorableWeighted = Object.entries(categoryGroupScores).some(
+    ([g, sc]) => sc != null && (Number(categoryWeights?.[g]) || 0) > 0
+  );
+  const eiScore = weightedRMS(categoryGroupScores, categoryWeights);
+  return { subCategoryScores, categoryGroupScores, eiScore, hasScorableWeighted };
+}
+
+// Per-measure sigmoid scores for a single SEASON vs its decade's baselines.
+function measureScoresForSeason(season, decadeKey, eraBaselines) {
+  const ms = {};
+  for (const m of ERA_MEASURES) {
+    const bounds = eraBaselines[decadeKey]?.[m];
+    const sc = normalizeMeasureScore(season[m], bounds, MEASURE_DIRECTION[m]);
+    if (sc != null) ms[m] = sc;
+  }
+  return ms;
+}
+
+// Average an array of {subCategoryScores, categoryGroupScores} objects
+// element-wise, skipping nulls. Used to give the player card representative
+// category bars for a multi-season decade/career average.
+function averageScoreMaps(maps, key) {
+  const sums = {};
+  const counts = {};
+  for (const mp of maps) {
+    for (const [k, v] of Object.entries(mp[key] || {})) {
+      if (v == null) continue;
+      sums[k] = (sums[k] || 0) + v;
+      counts[k] = (counts[k] || 0) + 1;
+    }
+  }
+  const out = {};
+  for (const k of Object.keys(sums)) out[k] = sums[k] / counts[k];
+  return out;
+}
+
+const mean = (arr) => arr.reduce((a, b) => a + b, 0) / arr.length;
+
+/**
+ * By-Era EI. IDENTICAL pipeline to All-Time (normalize each SEASON → per-season
+ * EI → average the per-season EIs); the ONLY change is the reference distribution
+ * (per decade instead of global). Returns:
+ *   - playerRankings: one "all eras" EI per player = average of his per-season
+ *     EIs, each season normalized vs its own decade. Filtered by career games.
+ *   - decadeRankings: { [decadeKey]: { players, allEIScores } } — a SEPARATE
+ *     ranking per decade; a player's decade EI = average of his per-season EIs
+ *     in that decade. A player appears in every decade where his total games
+ *     reached ERA_DECADE_GAMES_FLOOR.
+ *
+ * Same base signature/return keys as computeEIScoresHierarchical so the page can
+ * swap compute paths freely. `topYears` is intentionally omitted.
+ */
+export function computeEIScoresByEra(
+  seasonData,
+  categoryWeights,
+  subCategoryWeights,
+  opts = {}
+) {
+  const { minGames = 0, categoryGroups } = opts;
+  const groups = categoryGroups ?? CATEGORY_GROUPS;
+  const careerLegacy = computeCareerLegacyScores(seasonData);
+  const decadeLegacy = computeDecadeLegacyScores(seasonData);
+
+  // Group each player's seasons by decade, tracking total games per decade.
+  const byPlayer = new Map(); // name → Map(decadeKey → { seasons[], games, minutes })
+  for (const s of seasonData) {
+    const dk = seasonDecadeKey(s.season);
+    if (dk == null || dk === PRE_1960_BUCKET) continue; // excluded by default
+    if (!byPlayer.has(s.player_name)) byPlayer.set(s.player_name, new Map());
+    const decades = byPlayer.get(s.player_name);
+    if (!decades.has(dk)) decades.set(dk, { seasons: [], games: 0, minutes: 0 });
+    const bucket = decades.get(dk);
+    bucket.seasons.push(s);
+    bucket.games += Number(s.games) || 0;
+    bucket.minutes += Number(s.minutes_total) || 0;
+  }
+
+  // Decade distribution = the SEASONS of players who cleared the games floor in
+  // that decade. Below the floor, none of the player's seasons enter the pool.
+  const seasonsByDecade = new Map();
+  for (const decades of byPlayer.values()) {
+    for (const [dk, bucket] of decades) {
+      if (bucket.games < ERA_DECADE_GAMES_FLOOR) continue;
+      if (!seasonsByDecade.has(dk)) seasonsByDecade.set(dk, []);
+      for (const s of bucket.seasons) seasonsByDecade.get(dk).push(s);
+    }
+  }
+  const eraBaselines = computeEraBaselines(seasonsByDecade);
+
+  const decadeBuckets = new Map(); // decadeKey → array of ranking entries
+  const playerRankings = [];
+  const allEIScores = [];
+
+  for (const [name, decades] of byPlayer) {
+    let totalGames = 0;
+    let totalMinutes = 0;
+    const minutesByDecade = {};
+    for (const [dk, bucket] of decades) {
+      totalGames += bucket.games;
+      totalMinutes += bucket.minutes;
+      minutesByDecade[dk] = bucket.minutes;
+    }
+    let primaryDecade = null;
+    let bestMin = -Infinity;
+    for (const [dk, mins] of Object.entries(minutesByDecade)) {
+      if (mins > bestMin) {
+        bestMin = mins;
+        primaryDecade = Number(dk);
+      }
+    }
+
+    // ── (1) "All eras": average per-season EIs across the whole career, each
+    //        season normalized vs its own decade (career-cumulative Legacy). ──
+    const careerEIs = [];
+    const careerMaps = [];
+    for (const [dk, bucket] of decades) {
+      for (const s of bucket.seasons) {
+        const step = eraStep2(
+          measureScoresForSeason(s, dk, eraBaselines),
+          categoryWeights,
+          subCategoryWeights,
+          groups,
+          careerLegacy[name]
+        );
+        if (!step.hasScorableWeighted) continue;
+        careerEIs.push(step.eiScore);
+        careerMaps.push(step);
+      }
+    }
+    if (careerEIs.length > 0) {
+      const careerEI = mean(careerEIs);
+      const careerLine = {
+        player_name: name,
+        season: "Era-Adjusted Career",
+        games: totalGames,
+        eiScore: careerEI,
+        categoryScores: averageScoreMaps(careerMaps, "subCategoryScores"),
+        categoryGroupScores: averageScoreMaps(careerMaps, "categoryGroupScores"),
+      };
+      allEIScores.push(careerEI);
+      playerRankings.push({
+        player_name: name,
+        careerEI,
+        peakEI: Math.min(...careerEIs),
+        totalSeasons: careerEIs.length,
+        totalGames,
+        totalMinutes,
+        minutesByDecade,
+        primaryDecade,
+        selectedSeasons: [careerLine],
+        allSeasons: [careerLine],
+      });
+    }
+
+    // ── (2) Per-decade: average per-season EIs within each qualifying decade,
+    //        each season normalized vs that decade (per-decade Legacy). ──────
+    for (const [dk, bucket] of decades) {
+      if (bucket.games < ERA_DECADE_GAMES_FLOOR) continue;
+      const decEIs = [];
+      const decMaps = [];
+      for (const s of bucket.seasons) {
+        const step = eraStep2(
+          measureScoresForSeason(s, dk, eraBaselines),
+          categoryWeights,
+          subCategoryWeights,
+          groups,
+          decadeLegacy[dk]?.[name]
+        );
+        if (!step.hasScorableWeighted) continue;
+        decEIs.push(step.eiScore);
+        decMaps.push(step);
+      }
+      if (decEIs.length === 0) continue;
+
+      const decadeEI = mean(decEIs);
+      const decadeCard = {
+        player_name: name,
+        season: `${decadeLabel(dk)} performance`,
+        games: bucket.games,
+        eiScore: decadeEI,
+        categoryScores: averageScoreMaps(decMaps, "subCategoryScores"),
+        categoryGroupScores: averageScoreMaps(decMaps, "categoryGroupScores"),
+      };
+      if (!decadeBuckets.has(dk)) decadeBuckets.set(dk, []);
+      decadeBuckets.get(dk).push({
+        player_name: name,
+        careerEI: decadeEI,
+        peakEI: Math.min(...decEIs),
+        totalSeasons: decEIs.length,
+        totalGames: bucket.games,
+        totalMinutes: bucket.minutes,
+        minutesByDecade,
+        primaryDecade: dk, // the decade this entry represents
+        selectedSeasons: [decadeCard],
+        allSeasons: [decadeCard],
+      });
+    }
+  }
+
+  const filtered =
+    minGames > 0
+      ? playerRankings.filter((p) => p.totalGames >= minGames)
+      : playerRankings;
+
+  filtered.sort((a, b) => a.careerEI - b.careerEI);
+
+  const decadeRankings = {};
+  for (const [dk, entries] of decadeBuckets) {
+    entries.sort((a, b) => a.careerEI - b.careerEI);
+    decadeRankings[dk] = {
+      players: entries,
+      allEIScores: entries.map((e) => e.careerEI),
+    };
+  }
+
+  return {
+    decadeRankings,
+    playerRankings: filtered,
+    seasonScores: [],
+    allEIScores,
+    measureBounds: null,
+    eraBaselines,
+  };
 }
