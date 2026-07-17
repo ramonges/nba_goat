@@ -864,7 +864,7 @@ export default function MetricsComparison() {
             seasonData,
             normalizedCategoryWeights,
             normalizedSubCategoryWeights,
-            { minGames }
+            { minGames, topYears: topYears.value }
           )
         : computeEIScoresHierarchical(
             seasonData,

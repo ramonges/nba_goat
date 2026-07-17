@@ -31,6 +31,20 @@ const TOP_YEARS_OPTIONS = [
   })),
 ];
 
+// Gamified one-click leaderboards. Each preset loads every player, resets to the
+// balanced default weighting, and jumps to that decade's era-relative ranking
+// (or the all-time board). `dk: "all"` = all-time; a number = that decade.
+const DECADE_PRESETS = [
+  { dk: "all", decade: "All-Time", tag: "GOATs", color: "#f2c14e" },
+  { dk: 1960, decade: "1960s", tag: "Best Players", color: "#e8894a" },
+  { dk: 1970, decade: "1970s", tag: "Best Players", color: "#e05a6d" },
+  { dk: 1980, decade: "1980s", tag: "Best Players", color: "#b86ce0" },
+  { dk: 1990, decade: "1990s", tag: "Best Players", color: "#6c7ae0" },
+  { dk: 2000, decade: "2000s", tag: "Best Players", color: "#4ab5e8" },
+  { dk: 2010, decade: "2010s", tag: "Best Players", color: "#3fbf9b" },
+  { dk: 2020, decade: "2020s", tag: "Best Players", color: "#7ac74f" },
+];
+
 const selectStyles = {
   control: (base, state) => ({
     ...base,
@@ -388,6 +402,42 @@ export default function CreateGoatRanking() {
     setError(null);
   }, []);
 
+  // One-click gamified preset: balanced default weights + the chosen board
+  // (all-time or a single decade), loading every player if needed.
+  const applyDecadePreset = useCallback(
+    async (dk) => {
+      resetToDefaults();
+      setPlayerMode("all");
+      setShowComparison(false);
+      if (dk === "all") {
+        setEiMode("all_time");
+        setEraDecadeFilter("all");
+      } else {
+        setEiMode("era");
+        setEraDecadeFilter(dk);
+      }
+      if (seasonData) return; // already loaded → live recompute handles the rest
+      setLoading(true);
+      setError(null);
+      setResults(null);
+      setPlayerCard(null);
+      try {
+        const data = await fetchAllPlayersSeasonAverages(
+          ALL_PLAYERS,
+          (current, total, name) =>
+            setProgress(`Fetching ${name} (${current}/${total})`)
+        );
+        setSeasonData(data);
+      } catch (err) {
+        setError(err.message || "Failed to fetch data.");
+      } finally {
+        setLoading(false);
+        setProgress("");
+      }
+    },
+    [seasonData, resetToDefaults]
+  );
+
   // ── Drag handlers ───────────────────────────────────────────────────────
   const onDragStart = useCallback((e, subCat, fromCat) => {
     dragInfo.current = { subCat, fromCat };
@@ -507,7 +557,11 @@ export default function CreateGoatRanking() {
             seasonData,
             normalizedCategoryWeights,
             normalizedSubCategoryWeights,
-            { minGames, categoryGroups: userCategoryGroups }
+            {
+              minGames,
+              categoryGroups: userCategoryGroups,
+              topYears: topYears.value,
+            }
           )
         : computeEIScoresHierarchical(
             seasonData,
@@ -535,7 +589,11 @@ export default function CreateGoatRanking() {
           seasonData,
           DEFAULT_CATEGORY_WEIGHTS,
           DEFAULT_SUBCATEGORY_WEIGHTS,
-          { minGames, categoryGroups: CATEGORY_GROUPS }
+          {
+            minGames,
+            categoryGroups: CATEGORY_GROUPS,
+            topYears: topYears.value,
+          }
         )
       : computeEIScoresHierarchical(
           seasonData,
@@ -615,10 +673,47 @@ export default function CreateGoatRanking() {
           window (lowest mean EI). Lower EI = better.
         </p>
 
+        <div className="decade-presets">
+          <div className="decade-presets-label">
+            Quick Picks · one-click leaderboards
+          </div>
+          <div className="decade-presets-row">
+            {DECADE_PRESETS.map((p) => {
+              const active =
+                p.dk === "all"
+                  ? eiMode === "all_time"
+                  : eiMode === "era" &&
+                    String(eraDecadeFilter) === String(p.dk);
+              return (
+                <button
+                  key={String(p.dk)}
+                  type="button"
+                  className={`decade-preset ${active ? "decade-preset--active" : ""}`}
+                  style={{ "--preset-color": p.color }}
+                  onClick={() => applyDecadePreset(p.dk)}
+                  disabled={loading}
+                >
+                  <span className="decade-preset-decade">{p.decade}</span>
+                  <span className="decade-preset-tag">{p.tag}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
         <div className="goat-controls-layout">
-          <div className="goat-left-controls">
-            <div className="lab-control-card">
-              <label className="lab-control-label">Player Selection</label>
+          <div className="goat-left-controls step-panel">
+            <div className="step-panel-header">
+              <span className="step-panel-title">Step by Step Picks</span>
+              <span className="step-panel-subtitle">
+                Build your ranking one choice at a time
+              </span>
+            </div>
+            <div className="lab-control-card lab-step-card">
+              <label className="lab-control-label">
+                <span className="lab-step-badge">1</span>
+                Players
+              </label>
               <div className="player-mode-toggle">
                 <button
                   className={`mode-btn ${playerMode === "all" ? "mode-btn--active" : ""}`}
@@ -651,10 +746,16 @@ export default function CreateGoatRanking() {
                   }
                 />
               )}
+              <span className="control-hint">
+                Rank every NBA player, or only the ones you pick.
+              </span>
             </div>
 
-            <div className="lab-control-card">
-              <label className="lab-control-label">EI Normalization</label>
+            <div className="lab-control-card lab-step-card">
+              <label className="lab-control-label">
+                <span className="lab-step-badge">2</span>
+                Stat Distribution
+              </label>
               <div className="player-mode-toggle">
                 <button
                   className={`mode-btn ${eiMode === "all_time" ? "mode-btn--active" : ""}`}
@@ -663,7 +764,7 @@ export default function CreateGoatRanking() {
                     setEraDecadeFilter("all");
                   }}
                 >
-                  All Selection
+                  All-Time
                 </button>
                 <button
                   className={`mode-btn ${eiMode === "era" ? "mode-btn--active" : ""}`}
@@ -677,14 +778,51 @@ export default function CreateGoatRanking() {
               </div>
               <span className="control-hint">
                 {eiMode === "era"
-                  ? "Each player is scored against the players of his own decade(s) (60s–20s), then blended by minutes. Dominance relative to his contemporaries, not raw output."
-                  : "Each player is scored against the whole all-time distribution."}
+                  ? "Every player is ranked together, but each player's score is adjusted to the distribution of the players from his own era (decade). Dominance relative to his contemporaries."
+                  : "Every player is scored against the stats of all players since the beginning of the NBA."}
               </span>
+
+              {eiMode === "era" && (
+                <div className="lab-subfield">
+                  <label className="lab-control-sublabel">Decade ranking</label>
+                  <Select
+                    options={eraDecadeOptions}
+                    value={
+                      eraDecadeOptions.find(
+                        (o) => String(o.value) === String(eraDecadeFilter)
+                      ) || null
+                    }
+                    onChange={(opt) =>
+                      setEraDecadeFilter(opt ? opt.value : "all")
+                    }
+                    styles={selectStyles}
+                    isDisabled={eraDecadeOptions.length === 0}
+                    placeholder={
+                      eraDecadeOptions.length === 0
+                        ? "Load players first…"
+                        : "All eras…"
+                    }
+                    menuPortalTarget={
+                      typeof document !== "undefined" ? document.body : null
+                    }
+                    menuPlacement="auto"
+                  />
+                  <span className="control-hint">
+                    &ldquo;All eras&rdquo; ranks every player&apos;s full career.
+                    Pick a decade to rank players by how they performed in that
+                    decade only — a player who spanned decades appears in each.
+                  </span>
+                </div>
+              )}
             </div>
 
-            {eiMode === "all_time" && (
-              <div className="lab-control-card">
-                <label className="lab-control-label">Top Years Window</label>
+            {(eiMode === "all_time" ||
+              (eiMode === "era" && eraDecadeFilter === "all")) && (
+              <div className="lab-control-card lab-step-card">
+                <label className="lab-control-label">
+                  <span className="lab-step-badge">3</span>
+                  Top Years Window
+                </label>
                 <Select
                   options={TOP_YEARS_OPTIONS}
                   value={topYears}
@@ -696,47 +834,18 @@ export default function CreateGoatRanking() {
                   menuPlacement="auto"
                 />
                 <span className="control-hint">
-                  Choose all careers or among the best years of players for
-                  comparisons.
+                  Rank on a player&apos;s whole career, or on his best
+                  consecutive stretch — the lowest average EI over the chosen
+                  window of seasons.
                 </span>
               </div>
             )}
 
-            {eiMode === "era" && (
-              <div className="lab-control-card">
-                <label className="lab-control-label">Decade</label>
-                <Select
-                  options={eraDecadeOptions}
-                  value={
-                    eraDecadeOptions.find(
-                      (o) => String(o.value) === String(eraDecadeFilter)
-                    ) || null
-                  }
-                  onChange={(opt) =>
-                    setEraDecadeFilter(opt ? opt.value : "all")
-                  }
-                  styles={selectStyles}
-                  isDisabled={eraDecadeOptions.length === 0}
-                  placeholder={
-                    eraDecadeOptions.length === 0
-                      ? "Load players first…"
-                      : "All eras…"
-                  }
-                  menuPortalTarget={
-                    typeof document !== "undefined" ? document.body : null
-                  }
-                  menuPlacement="auto"
-                />
-                <span className="control-hint">
-                  &ldquo;All eras&rdquo; ranks each player&apos;s minutes-blended
-                  career. Pick a decade to rank players by how they performed in
-                  that decade only — a player who spanned decades appears in each.
-                </span>
-              </div>
-            )}
-
-            <div className="lab-control-card">
-              <label className="lab-control-label">Your Categories</label>
+            <div className="lab-control-card lab-step-card">
+              <label className="lab-control-label">
+                <span className="lab-step-badge">4</span>
+                Your Categories
+              </label>
               <div className="builder-actions">
                 <input
                   className="builder-name-input"

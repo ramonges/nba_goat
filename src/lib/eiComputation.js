@@ -1358,7 +1358,9 @@ const mean = (arr) => arr.reduce((a, b) => a + b, 0) / arr.length;
  *     reached ERA_DECADE_GAMES_FLOOR.
  *
  * Same base signature/return keys as computeEIScoresHierarchical so the page can
- * swap compute paths freely. `topYears` is intentionally omitted.
+ * swap compute paths freely. `opts.topYears` applies the same best-consecutive
+ * window to the "all eras" career roll-up as All-Time mode (default "all" =
+ * average every season). The per-decade rankings always average the full decade.
  */
 export function computeEIScoresByEra(
   seasonData,
@@ -1366,7 +1368,7 @@ export function computeEIScoresByEra(
   subCategoryWeights,
   opts = {}
 ) {
-  const { minGames = 0, categoryGroups } = opts;
+  const { minGames = 0, categoryGroups, topYears = "all" } = opts;
   const groups = categoryGroups ?? CATEGORY_GROUPS;
   const careerLegacy = computeCareerLegacyScores(seasonData);
   const decadeLegacy = computeDecadeLegacyScores(seasonData);
@@ -1419,10 +1421,11 @@ export function computeEIScoresByEra(
       }
     }
 
-    // ── (1) "All eras": average per-season EIs across the whole career, each
-    //        season normalized vs its own decade (career-cumulative Legacy). ──
-    const careerEIs = [];
-    const careerMaps = [];
+    // ── (1) "All eras": per-season EIs across the whole career, each season
+    //        normalized vs its own decade (career-cumulative Legacy). The best
+    //        consecutive `topYears` window is then averaged, exactly like the
+    //        All-Time path (default "all" → average every season). ────────────
+    const careerSeasons = []; // { season, eiScore, step }
     for (const [dk, bucket] of decades) {
       for (const s of bucket.seasons) {
         const step = eraStep2(
@@ -1433,12 +1436,15 @@ export function computeEIScoresByEra(
           careerLegacy[name]
         );
         if (!step.hasScorableWeighted) continue;
-        careerEIs.push(step.eiScore);
-        careerMaps.push(step);
+        careerSeasons.push({ season: s.season, eiScore: step.eiScore, step });
       }
     }
-    if (careerEIs.length > 0) {
-      const careerEI = mean(careerEIs);
+    if (careerSeasons.length > 0) {
+      const { selectedSeasons, careerEI } = pickBestSlidingWindow(
+        careerSeasons,
+        topYears
+      );
+      const careerMaps = selectedSeasons.map((x) => x.step);
       const careerLine = {
         player_name: name,
         season: "Era-Adjusted Career",
@@ -1451,8 +1457,8 @@ export function computeEIScoresByEra(
       playerRankings.push({
         player_name: name,
         careerEI,
-        peakEI: Math.min(...careerEIs),
-        totalSeasons: careerEIs.length,
+        peakEI: Math.min(...careerSeasons.map((x) => x.eiScore)),
+        totalSeasons: careerSeasons.length,
         totalGames,
         totalMinutes,
         minutesByDecade,
