@@ -217,8 +217,8 @@ const CATEGORY_INFO = {
   },
   "Playoff Consistency": {
     summary: "Stability of performance in playoffs",
-    metrics: ["Playoff bad-game rate", "Playoff Game Score CV"],
-    calculation: "RMS of sigmoid-normalized metrics, inverted. Rewards players who avoid poor playoff performances.",
+    metrics: ["Playoff bad-game rate"],
+    calculation: "Sigmoid-normalized, inverted. Rewards players who avoid poor playoff performances.",
     direction: "Lower raw values are better (fewer bad playoff games)",
   },
   "Awards Recognition": {

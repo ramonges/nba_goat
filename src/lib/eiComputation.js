@@ -139,7 +139,7 @@ export const CATEGORIES = {
     direction: "higher",
   },
   "Playoff Consistency": {
-    measures: ["playoff_bad_game_rate", "playoff_game_score_cv"],
+    measures: ["playoff_bad_game_rate"],
     direction: "lower",
   },
   "Awards Recognition": {
@@ -1032,6 +1032,53 @@ export function eiScoresTied(a, b) {
 }
 
 /**
+ * Per-decade raw value arrays for every era measure, drawn from the SAME
+ * eligible season pool the By-Era EI uses (players who cleared the decade games
+ * floor). Stats untracked in a decade are omitted (never imputed). Powers the
+ * "Explore Eras" distribution viewer.
+ * Returns { decades: number[], byDecade: { [dk]: { [measure]: number[] } } }.
+ */
+export function computeEraDistributions(seasonData) {
+  const byPlayer = new Map();
+  for (const s of seasonData) {
+    const dk = seasonDecadeKey(s.season);
+    if (dk == null || dk === PRE_1960_BUCKET) continue;
+    if (!byPlayer.has(s.player_name)) byPlayer.set(s.player_name, new Map());
+    const decades = byPlayer.get(s.player_name);
+    if (!decades.has(dk)) decades.set(dk, { seasons: [], games: 0 });
+    const bucket = decades.get(dk);
+    bucket.seasons.push(s);
+    bucket.games += Number(s.games) || 0;
+  }
+
+  const seasonsByDecade = new Map();
+  for (const decades of byPlayer.values()) {
+    for (const [dk, bucket] of decades) {
+      if (bucket.games < ERA_DECADE_GAMES_FLOOR) continue;
+      if (!seasonsByDecade.has(dk)) seasonsByDecade.set(dk, []);
+      for (const s of bucket.seasons) seasonsByDecade.get(dk).push(s);
+    }
+  }
+
+  const byDecade = {};
+  for (const [dk, seasons] of seasonsByDecade) {
+    byDecade[dk] = {};
+    for (const m of ERA_MEASURES) {
+      if (!statTrackedInDecade(m, dk)) continue;
+      const vals = seasons
+        .map((s) => s[m])
+        .filter((v) => v != null && !isNaN(v) && isFinite(v));
+      if (vals.length > 0) byDecade[dk][m] = vals;
+    }
+  }
+
+  const decades = Object.keys(byDecade)
+    .map(Number)
+    .sort((a, b) => a - b);
+  return { decades, byDecade };
+}
+
+/**
  * Assign display ranks with ties (1, 1, 3 …). Assumes players are already
  * sorted best-first (lowest careerEI = rank 1).
  */
@@ -1326,24 +1373,6 @@ function measureScoresForSeason(season, decadeKey, eraBaselines) {
   return ms;
 }
 
-// Average an array of {subCategoryScores, categoryGroupScores} objects
-// element-wise, skipping nulls. Used to give the player card representative
-// category bars for a multi-season decade/career average.
-function averageScoreMaps(maps, key) {
-  const sums = {};
-  const counts = {};
-  for (const mp of maps) {
-    for (const [k, v] of Object.entries(mp[key] || {})) {
-      if (v == null) continue;
-      sums[k] = (sums[k] || 0) + v;
-      counts[k] = (counts[k] || 0) + 1;
-    }
-  }
-  const out = {};
-  for (const k of Object.keys(sums)) out[k] = sums[k] / counts[k];
-  return out;
-}
-
 const mean = (arr) => arr.reduce((a, b) => a + b, 0) / arr.length;
 
 /**
@@ -1424,8 +1453,10 @@ export function computeEIScoresByEra(
     // ── (1) "All eras": per-season EIs across the whole career, each season
     //        normalized vs its own decade (career-cumulative Legacy). The best
     //        consecutive `topYears` window is then averaged, exactly like the
-    //        All-Time path (default "all" → average every season). ────────────
-    const careerSeasons = []; // { season, eiScore, step }
+    //        All-Time path (default "all" → average every season). Keep the
+    //        real per-season objects in selectedSeasons/allSeasons so charts
+    //        (overlay / curves over seasons) can plot the full career path. ──
+    const careerSeasons = [];
     for (const [dk, bucket] of decades) {
       for (const s of bucket.seasons) {
         const step = eraStep2(
@@ -1436,7 +1467,14 @@ export function computeEIScoresByEra(
           careerLegacy[name]
         );
         if (!step.hasScorableWeighted) continue;
-        careerSeasons.push({ season: s.season, eiScore: step.eiScore, step });
+        careerSeasons.push({
+          player_name: name,
+          season: s.season,
+          games: s.games,
+          eiScore: step.eiScore,
+          categoryScores: step.subCategoryScores,
+          categoryGroupScores: step.categoryGroupScores,
+        });
       }
     }
     if (careerSeasons.length > 0) {
@@ -1444,15 +1482,6 @@ export function computeEIScoresByEra(
         careerSeasons,
         topYears
       );
-      const careerMaps = selectedSeasons.map((x) => x.step);
-      const careerLine = {
-        player_name: name,
-        season: "Era-Adjusted Career",
-        games: totalGames,
-        eiScore: careerEI,
-        categoryScores: averageScoreMaps(careerMaps, "subCategoryScores"),
-        categoryGroupScores: averageScoreMaps(careerMaps, "categoryGroupScores"),
-      };
       allEIScores.push(careerEI);
       playerRankings.push({
         player_name: name,
@@ -1463,17 +1492,17 @@ export function computeEIScoresByEra(
         totalMinutes,
         minutesByDecade,
         primaryDecade,
-        selectedSeasons: [careerLine],
-        allSeasons: [careerLine],
+        selectedSeasons,
+        allSeasons: careerSeasons,
       });
     }
 
     // ── (2) Per-decade: average per-season EIs within each qualifying decade,
-    //        each season normalized vs that decade (per-decade Legacy). ──────
+    //        each season normalized vs that decade (per-decade Legacy). Store
+    //        the real per-season scores so decade graphics can plot a curve. ─
     for (const [dk, bucket] of decades) {
       if (bucket.games < ERA_DECADE_GAMES_FLOOR) continue;
-      const decEIs = [];
-      const decMaps = [];
+      const decSeasons = [];
       for (const s of bucket.seasons) {
         const step = eraStep2(
           measureScoresForSeason(s, dk, eraBaselines),
@@ -1483,32 +1512,30 @@ export function computeEIScoresByEra(
           decadeLegacy[dk]?.[name]
         );
         if (!step.hasScorableWeighted) continue;
-        decEIs.push(step.eiScore);
-        decMaps.push(step);
+        decSeasons.push({
+          player_name: name,
+          season: s.season,
+          games: s.games,
+          eiScore: step.eiScore,
+          categoryScores: step.subCategoryScores,
+          categoryGroupScores: step.categoryGroupScores,
+        });
       }
-      if (decEIs.length === 0) continue;
+      if (decSeasons.length === 0) continue;
 
-      const decadeEI = mean(decEIs);
-      const decadeCard = {
-        player_name: name,
-        season: `${decadeLabel(dk)} performance`,
-        games: bucket.games,
-        eiScore: decadeEI,
-        categoryScores: averageScoreMaps(decMaps, "subCategoryScores"),
-        categoryGroupScores: averageScoreMaps(decMaps, "categoryGroupScores"),
-      };
+      const decadeEI = mean(decSeasons.map((x) => x.eiScore));
       if (!decadeBuckets.has(dk)) decadeBuckets.set(dk, []);
       decadeBuckets.get(dk).push({
         player_name: name,
         careerEI: decadeEI,
-        peakEI: Math.min(...decEIs),
-        totalSeasons: decEIs.length,
+        peakEI: Math.min(...decSeasons.map((x) => x.eiScore)),
+        totalSeasons: decSeasons.length,
         totalGames: bucket.games,
         totalMinutes: bucket.minutes,
         minutesByDecade,
         primaryDecade: dk, // the decade this entry represents
-        selectedSeasons: [decadeCard],
-        allSeasons: [decadeCard],
+        selectedSeasons: decSeasons,
+        allSeasons: decSeasons,
       });
     }
   }

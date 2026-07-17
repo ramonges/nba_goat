@@ -1,13 +1,25 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import Select from "react-select";
+import Plotly from "plotly.js-dist-min";
+import factoryModule from "react-plotly.js/factory";
 import {
   STAT_COLUMNS,
   PLAYER_COLORS,
   fetchPlayerData,
 } from "../lib/supabase";
 import { ALL_PLAYERS } from "../lib/players";
+import {
+  CATEGORY_GROUPS,
+  CATEGORIES,
+  computeEraDistributions,
+  fetchAllPlayersSeasonAverages,
+  decadeLabel,
+} from "../lib/eiComputation";
 import DistributionChart from "../components/DistributionChart";
 import "./StatsComparison.css";
+
+const createPlotlyComponent = factoryModule.default || factoryModule;
+const Plot = createPlotlyComponent(Plotly);
 
 const GAME_TYPE_OPTIONS = [
   { value: "all", label: "All Games" },
@@ -35,6 +47,23 @@ const VIEW_OPTIONS = [
   { value: "career", label: "Career Overview" },
   { value: "season", label: "Per Season" },
 ];
+
+// Accent color per decade — shared with the GOAT Lab presets for consistency.
+const DECADE_COLORS = {
+  1960: "#e8894a",
+  1970: "#e05a6d",
+  1980: "#b86ce0",
+  1990: "#6c7ae0",
+  2000: "#4ab5e8",
+  2010: "#3fbf9b",
+  2020: "#7ac74f",
+};
+
+// Sub-categories that participate in era distributions (Legacy is cumulative and
+// excluded from the per-season era measures).
+const ERA_GROUPS = Object.entries(CATEGORY_GROUPS).filter(
+  ([g]) => g !== "Legacy"
+);
 
 const selectStyles = {
   control: (base, state) => ({
@@ -97,7 +126,311 @@ const selectStyles = {
 
 const PLAYER_OPTIONS = ALL_PLAYERS.map((n) => ({ value: n, label: n }));
 
-export default function StatsComparison() {
+// ── Helpers for the era distribution charts ──────────────────────────────────
+function prettyMeasure(key) {
+  return key
+    .replace(/_per_game/g, " / G")
+    .replace(/_per36/g, " / 36")
+    .replace(/_pct/g, " %")
+    .replace(/_cv/g, " CV")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function stdDev(arr) {
+  const n = arr.length;
+  if (n < 2) return 0;
+  const m = arr.reduce((a, b) => a + b, 0) / n;
+  return Math.sqrt(arr.reduce((s, v) => s + (v - m) ** 2, 0) / (n - 1));
+}
+
+function kde(data, nPoints = 160) {
+  if (data.length < 4) return { x: [], y: [] };
+  const min = Math.min(...data);
+  const max = Math.max(...data);
+  const range = max - min || 1;
+  const lo = min - range * 0.12;
+  const hi = max + range * 0.12;
+  const step = (hi - lo) / nPoints;
+  const h = 1.06 * stdDev(data) * Math.pow(data.length, -0.2);
+  if (h === 0) return { x: [], y: [] };
+  const x = [];
+  const y = [];
+  for (let i = 0; i <= nPoints; i++) {
+    const xi = lo + i * step;
+    let sum = 0;
+    for (const d of data) {
+      const u = (xi - d) / h;
+      sum += Math.exp(-0.5 * u * u);
+    }
+    x.push(xi);
+    y.push(sum / (data.length * h * Math.sqrt(2 * Math.PI)));
+  }
+  return { x, y };
+}
+
+function hexA(hex, a) {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
+}
+
+// ── Era distribution chart for a single measure, overlaying decades ───────────
+function EraMeasureChart({ measure, byDecade, decades }) {
+  const { traces, pills } = useMemo(() => {
+    const t = [];
+    const p = [];
+    for (const dk of decades) {
+      const vals = byDecade[dk]?.[measure];
+      if (!vals || vals.length < 4) continue;
+      const curve = kde(vals);
+      if (!curve.x.length) continue;
+      const color = DECADE_COLORS[dk] || "#8b92a5";
+      t.push({
+        type: "scatter",
+        mode: "lines",
+        x: curve.x,
+        y: curve.y,
+        name: decadeLabel(dk),
+        line: { color, width: 2.5, shape: "spline" },
+        fill: "tozeroy",
+        fillcolor: hexA(color, 0.06),
+      });
+      const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+      p.push({
+        dk,
+        color,
+        mean,
+        sd: stdDev(vals),
+        n: vals.length,
+      });
+    }
+    return { traces: t, pills: p };
+  }, [measure, byDecade, decades]);
+
+  if (traces.length === 0) return null;
+
+  return (
+    <div className="chart-card">
+      <h3 className="chart-title">{prettyMeasure(measure)}</h3>
+      <Plot
+        data={traces}
+        layout={{
+          paper_bgcolor: "transparent",
+          plot_bgcolor: "rgba(20,24,33,0.6)",
+          font: { family: "Inter, sans-serif", size: 11, color: "#8b92a5" },
+          xaxis: {
+            title: {
+              text: prettyMeasure(measure),
+              font: { size: 10, color: "#565d72" },
+            },
+            gridcolor: "rgba(255,255,255,0.04)",
+            tickfont: { color: "#565d72", size: 10 },
+          },
+          yaxis: {
+            title: { text: "Density", font: { size: 10, color: "#565d72" } },
+            gridcolor: "rgba(255,255,255,0.04)",
+            tickfont: { color: "#565d72", size: 10 },
+          },
+          legend: {
+            orientation: "h",
+            y: -0.22,
+            font: { color: "#8b92a5", size: 10 },
+            bgcolor: "transparent",
+          },
+          margin: { t: 12, r: 20, b: 44, l: 52 },
+          height: 320,
+        }}
+        config={{ responsive: true, displayModeBar: false }}
+        style={{ width: "100%" }}
+      />
+      <div className="chart-stats-row">
+        {pills.map((p) => (
+          <div
+            key={p.dk}
+            className="chart-stat-pill"
+            style={{ borderColor: p.color }}
+          >
+            <span className="stat-player-dot" style={{ background: p.color }} />
+            <strong>{decadeLabel(p.dk)}</strong>
+            <span>μ {p.mean.toFixed(1)}</span>
+            <span>σ {p.sd.toFixed(1)}</span>
+            <span>n {p.n}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Explore Eras: pick a sub-category + eras, see how the distribution of each
+//    measure shifted decade to decade across the whole league ─────────────────
+function EraExplorer() {
+  const [eraData, setEraData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState("");
+  const [error, setError] = useState(null);
+  const [subCat, setSubCat] = useState("Scoring Production");
+  const [activeDecades, setActiveDecades] = useState(() => new Set());
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await fetchAllPlayersSeasonAverages(
+        ALL_PLAYERS,
+        (current, total, name) =>
+          setProgress(`Fetching ${name} (${current}/${total})`)
+      );
+      const dist = computeEraDistributions(data);
+      setEraData(dist);
+      setActiveDecades(new Set(dist.decades));
+    } catch (err) {
+      setError(err.message || "Failed to fetch league data.");
+    } finally {
+      setLoading(false);
+      setProgress("");
+    }
+  }, []);
+
+  const toggleDecade = useCallback((dk) => {
+    setActiveDecades((prev) => {
+      const next = new Set(prev);
+      if (next.has(dk)) next.delete(dk);
+      else next.add(dk);
+      return next;
+    });
+  }, []);
+
+  const orderedActive = useMemo(
+    () => (eraData ? eraData.decades.filter((d) => activeDecades.has(d)) : []),
+    [eraData, activeDecades]
+  );
+
+  const measures = CATEGORIES[subCat]?.measures ?? [];
+
+  if (!eraData) {
+    return (
+      <div className="controls-panel stats-panel">
+        <div className="stats-panel-header">
+          <h2 className="stats-panel-title">Explore Eras</h2>
+          <p className="controls-description">
+            See how the league-wide distribution of every stat shifted from the
+            1960s to today. Load the league once, then pick a category and the
+            decades you want to overlay.
+          </p>
+        </div>
+        <button className="analyze-btn" onClick={load} disabled={loading}>
+          {loading ? (
+            <>
+              <span className="spinner" />
+              {progress || "Loading league…"}
+            </>
+          ) : (
+            "Load league data"
+          )}
+        </button>
+        {error && <div className="error-banner">{error}</div>}
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="controls-panel stats-panel">
+        <div className="stats-panel-header">
+          <h2 className="stats-panel-title">Explore Eras</h2>
+          <p className="controls-description">
+            Pick a sub-category to see how each of its stats was distributed
+            across the players of every decade. Toggle eras to overlay or
+            isolate them.
+          </p>
+        </div>
+
+        <div className="era-picker-block">
+          <div className="era-picker-label">
+            <span className="stat-step-badge">1</span>
+            Sub-category
+          </div>
+          <div className="subcat-groups">
+            {ERA_GROUPS.map(([group, subs]) => (
+              <div key={group} className="subcat-group">
+                <div className="subcat-group-name">{group}</div>
+                <div className="subcat-rects">
+                  {subs.map((sc) => (
+                    <button
+                      key={sc}
+                      type="button"
+                      className={`subcat-rect ${sc === subCat ? "subcat-rect--active" : ""}`}
+                      onClick={() => setSubCat(sc)}
+                    >
+                      {sc}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="era-picker-block">
+          <div className="era-picker-label">
+            <span className="stat-step-badge">2</span>
+            Eras
+          </div>
+          <div className="era-rects">
+            {eraData.decades.map((dk) => {
+              const on = activeDecades.has(dk);
+              return (
+                <button
+                  key={dk}
+                  type="button"
+                  className={`era-rect ${on ? "era-rect--active" : ""}`}
+                  style={{ "--era-color": DECADE_COLORS[dk] || "#8b92a5" }}
+                  onClick={() => toggleDecade(dk)}
+                >
+                  <span className="era-rect-dot" />
+                  {decadeLabel(dk)}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      <div className="results-section">
+        <div className="results-header">
+          <h3>
+            <span className="results-player-name">{subCat}</span> · distribution
+            by era
+          </h3>
+          <p className="results-meta">
+            {orderedActive.length} era
+            {orderedActive.length === 1 ? "" : "s"} shown ·{" "}
+            {measures.length} measure{measures.length === 1 ? "" : "s"}
+          </p>
+        </div>
+
+        {orderedActive.length === 0 ? (
+          <div className="era-empty">Select at least one era to compare.</div>
+        ) : (
+          <div className="charts-grid">
+            {measures.map((m) => (
+              <EraMeasureChart
+                key={m}
+                measure={m}
+                byDecade={eraData.byDecade}
+                decades={orderedActive}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+// ── Player comparison (original feature) ─────────────────────────────────────
+function PlayerComparison() {
   const [selectedPlayers, setSelectedPlayers] = useState([]);
   const [selectedMetrics, setSelectedMetrics] = useState(DEFAULT_METRICS);
   const [gameType, setGameType] = useState(GAME_TYPE_OPTIONS[0]);
@@ -142,6 +475,7 @@ export default function StatsComparison() {
       setResults({
         players: playersData,
         metrics: selectedMetrics.map((m) => m.value),
+        gameTypeLabel: gameType.label,
       });
     } catch (err) {
       setError(err.message || "Failed to fetch data.");
@@ -152,17 +486,19 @@ export default function StatsComparison() {
   }, [selectedPlayers, selectedMetrics, gameType]);
 
   return (
-    <div className="stats-page">
-      <div className="controls-panel">
-        <h2 className="controls-title">Stats Distribution Comparison</h2>
-        <p className="controls-description">
-          Select players and metrics, choose filters, then click Analyze to
-          fetch data and generate charts.
-        </p>
+    <>
+      <div className="controls-panel stats-panel">
+        <div className="stats-panel-header">
+          <h2 className="stats-panel-title">Compare Players</h2>
+          <p className="controls-description">
+            Build your matchup step by step, then hit Analyze.
+          </p>
+        </div>
 
-        <div className="controls-grid">
-          <div className="control-group control-group--wide">
+        <div className="stat-steps">
+          <div className="stat-step-card">
             <label className="control-label">
+              <span className="stat-step-badge">1</span>
               Players
               <span className="control-count">
                 {ALL_PLAYERS.length} available
@@ -200,8 +536,9 @@ export default function StatsComparison() {
             )}
           </div>
 
-          <div className="control-group control-group--wide">
+          <div className="stat-step-card">
             <label className="control-label">
+              <span className="stat-step-badge">2</span>
               Metrics
               <span className="control-count">
                 {selectedMetrics.length} selected
@@ -218,24 +555,31 @@ export default function StatsComparison() {
             />
           </div>
 
-          <div className="control-group">
-            <label className="control-label">Game Type</label>
-            <Select
-              options={GAME_TYPE_OPTIONS}
-              value={gameType}
-              onChange={setGameType}
-              styles={selectStyles}
-            />
-          </div>
-
-          <div className="control-group">
-            <label className="control-label">View Mode</label>
-            <Select
-              options={VIEW_OPTIONS}
-              value={viewMode}
-              onChange={setViewMode}
-              styles={selectStyles}
-            />
+          <div className="stat-step-card">
+            <label className="control-label">
+              <span className="stat-step-badge">3</span>
+              Filters
+            </label>
+            <div className="stat-filter-row">
+              <div className="control-group">
+                <span className="control-sublabel">Game Type</span>
+                <Select
+                  options={GAME_TYPE_OPTIONS}
+                  value={gameType}
+                  onChange={setGameType}
+                  styles={selectStyles}
+                />
+              </div>
+              <div className="control-group">
+                <span className="control-sublabel">View Mode</span>
+                <Select
+                  options={VIEW_OPTIONS}
+                  value={viewMode}
+                  onChange={setViewMode}
+                  styles={selectStyles}
+                />
+              </div>
+            </div>
           </div>
         </div>
 
@@ -289,7 +633,7 @@ export default function StatsComparison() {
                 .map((p) => `${p.name}: ${p.data.length} games`)
                 .join(" · ")}
               {" · "}
-              {gameType.label}
+              {results.gameTypeLabel}
             </p>
           </div>
 
@@ -305,6 +649,31 @@ export default function StatsComparison() {
           </div>
         </div>
       )}
+    </>
+  );
+}
+
+export default function StatsComparison() {
+  const [mode, setMode] = useState("players");
+
+  return (
+    <div className="stats-page">
+      <div className="stats-mode-bar">
+        <button
+          className={`stats-mode-btn stats-mode-btn--players ${mode === "players" ? "stats-mode-btn--active" : ""}`}
+          onClick={() => setMode("players")}
+        >
+          Compare Players
+        </button>
+        <button
+          className={`stats-mode-btn stats-mode-btn--eras ${mode === "eras" ? "stats-mode-btn--active" : ""}`}
+          onClick={() => setMode("eras")}
+        >
+          Explore Eras
+        </button>
+      </div>
+
+      {mode === "players" ? <PlayerComparison /> : <EraExplorer />}
     </div>
   );
 }

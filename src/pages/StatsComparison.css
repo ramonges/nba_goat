@@ -233,6 +233,294 @@
   flex-shrink: 0;
 }
 
+/* ── Gamified panels / steps (matches the GOAT Lab) ────────────────────────── */
+.stats-panel {
+  background: linear-gradient(
+    180deg,
+    rgba(108, 122, 224, 0.06),
+    rgba(255, 255, 255, 0.012)
+  );
+  border-radius: 18px;
+}
+
+.stats-panel-header {
+  padding-bottom: 14px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.stats-panel-title {
+  font-size: 1.25rem;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  margin-bottom: 4px;
+  background: linear-gradient(135deg, #8fb0ff, #b79bff);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.stat-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-bottom: 22px;
+}
+
+.stat-step-card {
+  background: var(--bg-elevated);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 16px;
+}
+
+.stat-step-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, #5b9cf6, #7d6cf0);
+  color: #fff;
+  font-size: 0.82rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+  box-shadow:
+    0 3px 10px rgba(91, 108, 246, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  transform: rotate(-6deg);
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.stat-step-card:hover .stat-step-badge,
+.era-picker-block:hover .stat-step-badge {
+  transform: rotate(0deg) scale(1.08);
+}
+
+.stat-filter-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.control-sublabel {
+  display: block;
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.era-picker-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Glowing gradient Analyze button on the stats page */
+.stats-page .analyze-btn {
+  background: linear-gradient(135deg, #5b9cf6, #7d6cf0);
+  color: #fff;
+  border-radius: 12px;
+  padding: 13px 30px;
+  font-weight: 700;
+  box-shadow: 0 8px 22px rgba(91, 108, 246, 0.4);
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.2s ease,
+    opacity 0.15s ease;
+}
+
+.stats-page .analyze-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 30px rgba(91, 108, 246, 0.55);
+  opacity: 1;
+}
+
+/* ── Gamified mode toggle ──────────────────────────────────────────────────── */
+.stats-mode-bar {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.stats-mode-btn {
+  --mode-a: #5b9cf6;
+  --mode-b: #7d6cf0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px 20px;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--mode-a) 16%, transparent);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--mode-a) 4%, #141821),
+    color-mix(in srgb, var(--mode-b) 3%, #141821)
+  );
+  color: var(--text-secondary);
+  font-size: 0.98rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition:
+    transform 0.15s ease,
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    color 0.2s ease;
+}
+
+/* Two distinct color identities */
+.stats-mode-btn--players {
+  --mode-a: #4ab5e8;
+  --mode-b: #5b9cf6;
+}
+
+.stats-mode-btn--eras {
+  --mode-a: #b86ce0;
+  --mode-b: #e05a6d;
+}
+
+.stats-mode-btn:hover {
+  transform: translateY(-2px);
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--mode-a) 55%, transparent);
+}
+
+.stats-mode-btn--active {
+  color: #fff;
+  border-color: transparent;
+  background: linear-gradient(135deg, var(--mode-a), var(--mode-b));
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--mode-a) 40%, transparent);
+}
+
+/* ── Era / sub-category rectangle pickers ──────────────────────────────────── */
+.era-picker-block {
+  margin-bottom: 20px;
+}
+
+.era-picker-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+}
+
+.subcat-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 16px;
+}
+
+.subcat-group-name {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.subcat-rects {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.subcat-rect {
+  padding: 8px 12px;
+  border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    transform 0.14s ease,
+    border-color 0.18s ease,
+    color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.subcat-rect:hover {
+  transform: translateY(-1px);
+  color: var(--text-primary);
+  border-color: rgba(120, 150, 255, 0.4);
+}
+
+.subcat-rect--active {
+  color: #fff;
+  border-color: rgba(120, 150, 255, 0.7);
+  background: linear-gradient(135deg, #5b9cf6, #7d6cf0);
+  box-shadow: 0 6px 16px rgba(91, 108, 246, 0.4);
+}
+
+.era-rects {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.era-rect {
+  --era-color: #8b92a5;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-radius: 11px;
+  border: 1px solid color-mix(in srgb, var(--era-color) 35%, transparent);
+  background: color-mix(in srgb, var(--era-color) 8%, #141821);
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  opacity: 0.55;
+  transition:
+    transform 0.14s ease,
+    opacity 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.era-rect:hover {
+  transform: translateY(-2px);
+  opacity: 0.85;
+}
+
+.era-rect--active {
+  opacity: 1;
+  color: #fff;
+  border-color: var(--era-color);
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--era-color) 35%, transparent);
+}
+
+.era-rect-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--era-color);
+  flex-shrink: 0;
+}
+
+.era-empty {
+  padding: 40px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  background: var(--bg-surface);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+}
+
 @media (max-width: 768px) {
   .controls-grid {
     grid-template-columns: 1fr;
@@ -244,5 +532,9 @@
 
   .stats-page {
     padding: 16px 16px 60px;
+  }
+
+  .stats-mode-bar {
+    flex-direction: column;
   }
 }
