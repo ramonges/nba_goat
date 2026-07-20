@@ -91,7 +91,7 @@ const selectStyles = {
 const CATEGORY_INFO = {
   "Scoring Production": {
     summary: "Measures overall offensive output per season",
-    metrics: ["Points per game", "Points per 36 minutes", "Game Score mean"],
+    metrics: ["Points per game", "Game Score mean"],
     calculation: "Each metric is sigmoid-normalized using league-wide 10th and 90th percentile bounds. The category score is the Root Mean Square (RMS) of the normalized metrics. Lower score = better scorer.",
     direction: "Higher raw values are better",
   },
@@ -101,70 +101,58 @@ const CATEGORY_INFO = {
     calculation: "Sigmoid normalization on each metric, then RMS aggregation. Rewards players who log heavy minutes consistently.",
     direction: "Higher raw values are better",
   },
-  "Games Played": {
-    summary: "Availability and durability in a season",
-    metrics: ["Games played"],
-    calculation: "Single metric, sigmoid-normalized. Rewards players who suit up for more games.",
-    direction: "Higher raw values are better",
-  },
   "Total Rebounding": {
     summary: "Overall rebounding ability",
-    metrics: ["Rebounds per game", "Rebounds per 36 minutes"],
-    calculation: "RMS of sigmoid-normalized metrics. Captures both volume and rate.",
+    metrics: ["Rebounds per game"],
+    calculation: "Sigmoid-normalized rebounds per game.",
     direction: "Higher raw values are better",
   },
   "Offensive Rebounding": {
     summary: "Ability to grab offensive boards",
-    metrics: ["Offensive rebounds per game", "Offensive rebounds per 36 minutes"],
-    calculation: "RMS of sigmoid-normalized metrics.",
+    metrics: ["Offensive rebounds per game"],
+    calculation: "Sigmoid-normalized offensive rebounds per game.",
     direction: "Higher raw values are better",
   },
   "Defensive Rebounding": {
     summary: "Ability to secure defensive rebounds",
-    metrics: ["Defensive rebounds per game", "Defensive rebounds per 36 minutes"],
-    calculation: "RMS of sigmoid-normalized metrics.",
+    metrics: ["Defensive rebounds per game"],
+    calculation: "Sigmoid-normalized defensive rebounds per game.",
     direction: "Higher raw values are better",
   },
   Assists: {
     summary: "Playmaking and ball distribution",
-    metrics: ["Assists per game", "Assists per 36 minutes", "Assist-to-Turnover ratio"],
-    calculation: "RMS of three sigmoid-normalized metrics. Rewards both volume passing and efficiency of passing (low turnovers relative to assists).",
+    metrics: ["Assists per game", "Assist-to-Turnover ratio"],
+    calculation: "RMS of sigmoid-normalized metrics. Rewards volume passing and efficiency (AST/TOV).",
     direction: "Higher raw values are better",
   },
   Steals: {
     summary: "Ball-hawking ability on defense",
-    metrics: ["Steals per game", "Steals per 36 minutes"],
-    calculation: "RMS of sigmoid-normalized metrics.",
+    metrics: ["Steals per game"],
+    calculation: "Sigmoid-normalized steals per game.",
     direction: "Higher raw values are better",
   },
   Blocks: {
     summary: "Shot-blocking ability",
-    metrics: ["Blocks per game", "Blocks per 36 minutes"],
-    calculation: "RMS of sigmoid-normalized metrics.",
-    direction: "Higher raw values are better",
-  },
-  "Defensive Activity": {
-    summary: "Combined defensive disruption (stocks = steals + blocks)",
-    metrics: ["Stocks per game", "Stocks per 36 minutes"],
-    calculation: "RMS of sigmoid-normalized metrics. Stocks combine steals and blocks into a single defensive activity measure.",
+    metrics: ["Blocks per game"],
+    calculation: "Sigmoid-normalized blocks per game.",
     direction: "Higher raw values are better",
   },
   "Foul Discipline": {
     summary: "Ability to defend without fouling excessively",
-    metrics: ["Personal fouls per game", "Personal fouls per 36 minutes"],
-    calculation: "RMS of sigmoid-normalized metrics. Direction is inverted: fewer fouls means a better (lower) category score.",
+    metrics: ["Personal fouls per game"],
+    calculation: "Sigmoid-normalized, inverted: fewer fouls means a better (lower) category score.",
     direction: "Lower raw values are better (fewer fouls)",
   },
   "True Shooting Efficiency": {
     summary: "Overall shooting efficiency accounting for all shot types",
     metrics: ["True Shooting % = PTS / (2 × (FGA + 0.44 × FTA))"],
-    calculation: "Single metric, sigmoid-normalized. TS% is the gold standard for shooting efficiency.",
+    calculation: "Sigmoid-normalized TS%. Only counts for a player-season when that player has at least 200 regular-season games in the same decade; otherwise the measure is dropped.",
     direction: "Higher raw values are better",
   },
   "Field Goal Efficiency": {
     summary: "Shooting accuracy from the field",
-    metrics: ["Field Goal %", "Effective FG% = (FGM + 0.5 × 3PM) / FGA"],
-    calculation: "RMS of sigmoid-normalized FG% and eFG%. The eFG% rewards three-point shooting.",
+    metrics: ["Effective FG% = (FGM + 0.5 × 3PM) / FGA"],
+    calculation: "Sigmoid-normalized eFG%. Only counts for a player-season when that player has at least 200 regular-season games in the same decade; otherwise the measure is dropped.",
     direction: "Higher raw values are better",
   },
   "Three-Point Shooting": {
@@ -181,8 +169,8 @@ const CATEGORY_INFO = {
   },
   "Turnover Control": {
     summary: "Ability to take care of the ball",
-    metrics: ["Turnovers per game", "Turnovers per 36 minutes"],
-    calculation: "RMS of sigmoid-normalized metrics. Direction is inverted: fewer turnovers means a better (lower) category score.",
+    metrics: ["Turnovers per game"],
+    calculation: "Sigmoid-normalized, inverted: fewer turnovers means a better (lower) category score.",
     direction: "Lower raw values are better (fewer turnovers)",
   },
   Consistency: {
@@ -197,10 +185,16 @@ const CATEGORY_INFO = {
     calculation: "Single metric, sigmoid-normalized, inverted. A player with fewer bad games gets a better score.",
     direction: "Lower raw values are better (fewer bad games)",
   },
+  "Win Percentage Regular Season": {
+    summary: "Regular-season win percentage",
+    metrics: ["win_percentage (one value per season; requires ≥ 41 regular-season games)"],
+    calculation: "Takes the season's win_percentage from regular-season rows only when the player played at least 41 regular-season games; otherwise the measure is dropped (null). Then sigmoid-normalized.",
+    direction: "Higher raw values are better",
+  },
   "Plus-Minus Impact": {
     summary: "Net impact on team scoring margin when on court",
-    metrics: ["Plus/Minus per game", "Plus/Minus per 36 minutes"],
-    calculation: "RMS of sigmoid-normalized metrics. Positive +/- means the team outscores opponents with this player on court.",
+    metrics: ["Plus/Minus per game"],
+    calculation: "Sigmoid-normalized plus/minus per game. Positive +/- means the team outscores opponents with this player on court.",
     direction: "Higher raw values are better",
   },
   "Playoff Production": {
@@ -220,6 +214,12 @@ const CATEGORY_INFO = {
     metrics: ["Playoff bad-game rate"],
     calculation: "Sigmoid-normalized, inverted. Rewards players who avoid poor playoff performances.",
     direction: "Lower raw values are better (fewer bad playoff games)",
+  },
+  "Playoff Buzzer shot made": {
+    summary: "Successful playoff game-winning buzzer shots",
+    metrics: ["SUM(playoff_buzzer_make) where game_type = playoffs and playoff_buzzer_make = 1"],
+    calculation: "Sigmoid-normalized count of made playoff game-winning buzzer field goals. Missed attempts are excluded (no reliable attempt data).",
+    direction: "Higher raw values are better",
   },
   "Awards Recognition": {
     summary: "Individual league recognition and honors",
@@ -1059,7 +1059,7 @@ export default function MetricsComparison() {
               </div>
               <span className="control-hint">
                 {eiMode === "era"
-                  ? "Each player is scored against the players of his own decade(s) (60s–20s). Dominance relative to his contemporaries, not raw output."
+                  ? "Each player is scored against the players of his own decade(s) (50s–20s). Dominance relative to his contemporaries, not raw output."
                   : "Each player is scored against the whole all-time distribution."}
               </span>
             </div>

@@ -50,6 +50,7 @@ const VIEW_OPTIONS = [
 
 // Accent color per decade — shared with the GOAT Lab presets for consistency.
 const DECADE_COLORS = {
+  1950: "#c9a44a",
   1960: "#e8894a",
   1970: "#e05a6d",
   1980: "#b86ce0",
@@ -315,7 +316,7 @@ function EraExplorer() {
           <h2 className="stats-panel-title">Explore Eras</h2>
           <p className="controls-description">
             See how the league-wide distribution of every stat shifted from the
-            1960s to today. Load the league once, then pick a category and the
+            1950s to today. Load the league once, then pick a category and the
             decades you want to overlay.
           </p>
         </div>

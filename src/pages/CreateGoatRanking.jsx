@@ -36,6 +36,7 @@ const TOP_YEARS_OPTIONS = [
 // (or the all-time board). `dk: "all"` = all-time; a number = that decade.
 const DECADE_PRESETS = [
   { dk: "all", decade: "All-Time", tag: "GOATs", color: "#f2c14e" },
+  { dk: 1950, decade: "1950s", tag: "Best Players", color: "#c9a44a" },
   { dk: 1960, decade: "1960s", tag: "Best Players", color: "#e8894a" },
   { dk: 1970, decade: "1970s", tag: "Best Players", color: "#e05a6d" },
   { dk: 1980, decade: "1980s", tag: "Best Players", color: "#b86ce0" },

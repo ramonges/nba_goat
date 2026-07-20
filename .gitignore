@@ -22,3 +22,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Soccer analysis outputs
+soccer/outputs/
+__pycache__/
+*.pyc
+.venv/

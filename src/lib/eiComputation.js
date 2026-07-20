@@ -21,7 +21,6 @@ export const CATEGORY_GROUPS = {
   Volume: [
     "Scoring Production",
     "Minutes Load",
-    "Games Played",
     "Plus-Minus Impact",
   ],
   Rebounding: [
@@ -29,7 +28,7 @@ export const CATEGORY_GROUPS = {
     "Offensive Rebounding",
     "Defensive Rebounding",
   ],
-  Defense: ["Steals", "Blocks", "Defensive Activity", "Foul Discipline"],
+  Defense: ["Steals", "Blocks", "Foul Discipline"],
   Efficiency: [
     "True Shooting Efficiency",
     "Field Goal Efficiency",
@@ -38,54 +37,51 @@ export const CATEGORY_GROUPS = {
     "Turnover Control",
     "Assists",
   ],
-  Stability: ["Consistency", "Bad-Game Rate"],
-  Playoffs: ["Playoff Production", "Playoff Efficiency", "Playoff Consistency"],
+  Stability: ["Consistency", "Bad-Game Rate", "Win Percentage Regular Season"],
+  Playoffs: [
+    "Playoff Production",
+    "Playoff Efficiency",
+    "Playoff Consistency",
+    "Playoff Buzzer shot made",
+  ],
   Legacy: ["Awards Recognition", "Championship Success"],
 };
 
 export const CATEGORIES = {
   "Scoring Production": {
-    measures: ["points_per_game", "points_per36", "game_score_mean"],
+    measures: ["points_per_game", "game_score_mean"],
     direction: "higher",
   },
   "Minutes Load": {
     measures: ["minutes_total", "minutes_per_game"],
     direction: "higher",
   },
-  "Games Played": {
-    measures: ["games"],
-    direction: "higher",
-  },
   "Total Rebounding": {
-    measures: ["rebounds_per_game", "rebounds_per36"],
+    measures: ["rebounds_per_game"],
     direction: "higher",
   },
   "Offensive Rebounding": {
-    measures: ["offensive_rebounds_per_game", "offensive_rebounds_per36"],
+    measures: ["offensive_rebounds_per_game"],
     direction: "higher",
   },
   "Defensive Rebounding": {
-    measures: ["defensive_rebounds_per_game", "defensive_rebounds_per36"],
+    measures: ["defensive_rebounds_per_game"],
     direction: "higher",
   },
   Assists: {
-    measures: ["assists_per_game", "assists_per36", "ast_tov_ratio"],
+    measures: ["assists_per_game", "ast_tov_ratio"],
     direction: "higher",
   },
   Steals: {
-    measures: ["steals_per_game", "steals_per36"],
+    measures: ["steals_per_game"],
     direction: "higher",
   },
   Blocks: {
-    measures: ["blocks_per_game", "blocks_per36"],
-    direction: "higher",
-  },
-  "Defensive Activity": {
-    measures: ["stocks_per_game", "stocks_per36"],
+    measures: ["blocks_per_game"],
     direction: "higher",
   },
   "Foul Discipline": {
-    measures: ["fouls_per_game", "fouls_per36"],
+    measures: ["fouls_per_game"],
     direction: "lower",
   },
   "True Shooting Efficiency": {
@@ -93,7 +89,7 @@ export const CATEGORIES = {
     direction: "higher",
   },
   "Field Goal Efficiency": {
-    measures: ["field_goal_pct", "efg_pct"],
+    measures: ["efg_pct"],
     direction: "higher",
   },
   "Three-Point Shooting": {
@@ -105,7 +101,7 @@ export const CATEGORIES = {
     direction: "higher",
   },
   "Turnover Control": {
-    measures: ["turnovers_per_game", "turnovers_per36"],
+    measures: ["turnovers_per_game"],
     direction: "lower",
   },
   Consistency: {
@@ -116,8 +112,12 @@ export const CATEGORIES = {
     measures: ["bad_game_rate"],
     direction: "lower",
   },
+  "Win Percentage Regular Season": {
+    measures: ["win_percentage"],
+    direction: "higher",
+  },
   "Plus-Minus Impact": {
-    measures: ["plus_minus_per_game", "plus_minus_per36"],
+    measures: ["plus_minus_per_game"],
     direction: "higher",
   },
   "Playoff Production": {
@@ -141,6 +141,10 @@ export const CATEGORIES = {
   "Playoff Consistency": {
     measures: ["playoff_bad_game_rate"],
     direction: "lower",
+  },
+  "Playoff Buzzer shot made": {
+    measures: ["playoff_buzzer_makes"],
+    direction: "higher",
   },
   "Awards Recognition": {
     measures: [
@@ -188,6 +192,55 @@ const SIGMOID_ALPHA = 0.10;
 // produce identical rankings given identical inputs.
 export const MIN_GAMES_ALL_PLAYERS = 200;
 
+export const WIN_PERCENTAGE_MIN_GAMES = 41;
+
+/** Decade games required for True Shooting / Field Goal Efficiency to count toward EI. */
+export const TRUE_SHOOTING_DECADE_GAMES_FLOOR = 200;
+export const FIELD_GOAL_EFFICIENCY_DECADE_GAMES_FLOOR = 200;
+
+/**
+ * Total regular-season games per player per decade (same decade keys as
+ * seasonDecadeKey). Used for measure eligibility gates.
+ */
+function buildPlayerDecadeGames(seasonData) {
+  const out = new Map(); // player → Map(decadeKey → games)
+  for (const s of seasonData) {
+    const dk = seasonDecadeKey(s.season);
+    if (dk == null) continue;
+    if (!out.has(s.player_name)) out.set(s.player_name, new Map());
+    const m = out.get(s.player_name);
+    m.set(dk, (m.get(dk) || 0) + (Number(s.games) || 0));
+  }
+  return out;
+}
+
+/**
+ * Null out shooting-efficiency measures on seasons where the player has fewer
+ * than the decade-games floor for that measure.
+ */
+function applyShootingEfficiencyDecadeGates(seasonData) {
+  const decadeGames = buildPlayerDecadeGames(seasonData);
+  return seasonData.map((s) => {
+    const dk = seasonDecadeKey(s.season);
+    const g =
+      dk == null ? 0 : decadeGames.get(s.player_name)?.get(dk) || 0;
+    let next = s;
+    if (
+      g < TRUE_SHOOTING_DECADE_GAMES_FLOOR &&
+      s.true_shooting_pct != null
+    ) {
+      next = { ...next, true_shooting_pct: null };
+    }
+    if (
+      g < FIELD_GOAL_EFFICIENCY_DECADE_GAMES_FLOOR &&
+      s.efg_pct != null
+    ) {
+      next = { ...next, efg_pct: null };
+    }
+    return next;
+  });
+}
+
 // Stat columns required by the EI pipeline. Always selected from Supabase.
 const STAT_COLS = [
   "player_name",
@@ -211,6 +264,8 @@ const STAT_COLS = [
   "turnovers",
   "personal_fouls",
   "plus_minus",
+  "playoff_buzzer_make",
+  "win_percentage",
 ];
 
 // Candidate award / legacy columns. Each candidate has a clean JS `key` used
@@ -505,6 +560,20 @@ function computeSeasonMeasures(playerName, rows) {
           ? gameScores.filter((gs) => gs < 5).length / gameScores.length
           : null;
 
+      // Season-level win % (one value per season). Only eligible with enough
+      // regular-season games so partial seasons don't enter the ranking.
+      let winPct = null;
+      if (games >= WIN_PERCENTAGE_MIN_GAMES) {
+        for (const r of regular) {
+          const v = parseFloat(r.win_percentage);
+          if (!isNaN(v) && isFinite(v)) {
+            winPct = v;
+            break;
+          }
+        }
+      }
+      measures.win_percentage = winPct;
+
       // Playoff measures
       const pGames = playoff.length;
       measures.playoff_games = pGames;
@@ -567,6 +636,13 @@ function computeSeasonMeasures(playerName, rows) {
           pGameScores.length > 0
             ? pGameScores.filter((gs) => gs < 5).length / pGameScores.length
             : null;
+
+        // Game-winning playoff buzzer makes only (misses not tracked).
+        // Count rows with playoff_buzzer_make = 1 among playoff games.
+        measures.playoff_buzzer_makes = playoff.reduce((sum, r) => {
+          const v = parseFloat(r.playoff_buzzer_make);
+          return sum + (!isNaN(v) && v === 1 ? 1 : 0);
+        }, 0);
       } else {
         measures.playoff_points_per_game = 0;
         measures.playoff_rebounds_per_game = 0;
@@ -577,6 +653,7 @@ function computeSeasonMeasures(playerName, rows) {
         measures.playoff_game_score_mean = 0;
         measures.playoff_game_score_cv = null;
         measures.playoff_bad_game_rate = 1.0;
+        measures.playoff_buzzer_makes = 0;
       }
 
       // Award / legacy aggregation. Awards live on a single row of the season
@@ -922,11 +999,12 @@ function buildPlayerRankings(seasonScores, topYears, minGames = 0) {
  */
 export function computeEIScores(seasonData, weights, topYears, opts = {}) {
   const { minGames = 0 } = opts;
-  const measureBounds = computeMeasureBounds(seasonData);
-  const careerLegacy = computeCareerLegacyScores(seasonData);
+  const gated = applyShootingEfficiencyDecadeGates(seasonData);
+  const measureBounds = computeMeasureBounds(gated);
+  const careerLegacy = computeCareerLegacyScores(gated);
   const legacySubCats = CATEGORY_GROUPS.Legacy ?? [];
 
-  const seasonScores = seasonData.map((s) => {
+  const seasonScores = gated.map((s) => {
     const categoryScores = computeSubCategoryScores(s, measureBounds);
     // Override Legacy sub-categories with the player's career-cumulative value
     // so a 1-season ring on a title roster doesn't outrank a multi-ring HOFer.
@@ -968,15 +1046,16 @@ export function computeEIScoresHierarchical(
   // Allow callers to pass a custom category → sub-category tree (used by the
   // "Create your own GOAT" page where users build groupings interactively).
   const groups = categoryGroups ?? CATEGORY_GROUPS;
-  const measureBounds = computeMeasureBounds(seasonData);
-  const careerLegacy = computeCareerLegacyScores(seasonData);
+  const gated = applyShootingEfficiencyDecadeGates(seasonData);
+  const measureBounds = computeMeasureBounds(gated);
+  const careerLegacy = computeCareerLegacyScores(gated);
 
   // Legacy sub-categories are still defined globally; the user's category tree
   // may place them in arbitrary parents but the leaf-level career override
   // should still apply wherever they appear.
   const legacyLeafSet = new Set(CATEGORY_GROUPS.Legacy ?? []);
 
-  const seasonScores = seasonData.map((s) => {
+  const seasonScores = gated.map((s) => {
     // Step 2: sub-category (leaf) scores. Kept on `categoryScores` for the
     // player-card percentile charts that read per-sub-category values.
     const categoryScores = computeSubCategoryScores(s, measureBounds);
@@ -1042,7 +1121,7 @@ export function computeEraDistributions(seasonData) {
   const byPlayer = new Map();
   for (const s of seasonData) {
     const dk = seasonDecadeKey(s.season);
-    if (dk == null || dk === PRE_1960_BUCKET) continue;
+    if (dk == null || dk === PRE_1950_BUCKET) continue;
     if (!byPlayer.has(s.player_name)) byPlayer.set(s.player_name, new Map());
     const decades = byPlayer.get(s.player_name);
     if (!decades.has(dk)) decades.set(dk, { seasons: [], games: 0 });
@@ -1111,7 +1190,7 @@ export function assignDisplayRanks(players) {
 //     each season judged vs its own decade
 // A player appears in every decade where he cleared the games floor.
 
-const PRE_1960_BUCKET = "Pre-1960";
+const PRE_1950_BUCKET = "Pre-1950";
 
 // A player enters a decade's distribution / ranking only if his TOTAL games
 // across his seasons in that decade reach this floor. Keeps fringe/cup-of-coffee
@@ -1139,12 +1218,13 @@ export function seasonEndYear(season) {
 export function seasonDecadeKey(season) {
   const end = seasonEndYear(season);
   if (end == null) return null;
-  if (end < 1960) return PRE_1960_BUCKET;
+  // Pre-1950 seasons are excluded from era boards (thin / incomplete coverage).
+  if (end < 1950) return PRE_1950_BUCKET;
   return Math.floor(end / 10) * 10;
 }
 
 export function decadeLabel(decadeKey) {
-  if (decadeKey === PRE_1960_BUCKET) return "Pre-1960";
+  if (decadeKey === PRE_1950_BUCKET) return "Pre-1950";
   const now = new Date().getFullYear();
   if (Number(decadeKey) === Math.floor(now / 10) * 10) {
     return `${decadeKey}s (so far)`;
@@ -1206,7 +1286,7 @@ const STAT_FIRST_DECADE = {
 };
 
 function statTrackedInDecade(measure, decadeKey) {
-  if (decadeKey === PRE_1960_BUCKET) return false;
+  if (decadeKey === PRE_1950_BUCKET) return false;
   const first = STAT_FIRST_DECADE[measure];
   return first == null || Number(decadeKey) >= first;
 }
@@ -1292,7 +1372,7 @@ function computeDecadeLegacyScores(seasonData) {
   const byDecade = {};
   for (const s of seasonData) {
     const dk = seasonDecadeKey(s.season);
-    if (dk == null || dk === PRE_1960_BUCKET) continue;
+    if (dk == null || dk === PRE_1950_BUCKET) continue;
     if (!byDecade[dk]) byDecade[dk] = {};
     const pool = byDecade[dk];
     if (!pool[s.player_name]) {
@@ -1399,14 +1479,15 @@ export function computeEIScoresByEra(
 ) {
   const { minGames = 0, categoryGroups, topYears = "all" } = opts;
   const groups = categoryGroups ?? CATEGORY_GROUPS;
-  const careerLegacy = computeCareerLegacyScores(seasonData);
-  const decadeLegacy = computeDecadeLegacyScores(seasonData);
+  const gated = applyShootingEfficiencyDecadeGates(seasonData);
+  const careerLegacy = computeCareerLegacyScores(gated);
+  const decadeLegacy = computeDecadeLegacyScores(gated);
 
   // Group each player's seasons by decade, tracking total games per decade.
   const byPlayer = new Map(); // name → Map(decadeKey → { seasons[], games, minutes })
-  for (const s of seasonData) {
+  for (const s of gated) {
     const dk = seasonDecadeKey(s.season);
-    if (dk == null || dk === PRE_1960_BUCKET) continue; // excluded by default
+    if (dk == null || dk === PRE_1950_BUCKET) continue; // excluded by default
     if (!byPlayer.has(s.player_name)) byPlayer.set(s.player_name, new Map());
     const decades = byPlayer.get(s.player_name);
     if (!decades.has(dk)) decades.set(dk, { seasons: [], games: 0, minutes: 0 });

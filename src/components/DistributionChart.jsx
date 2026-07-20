@@ -3,6 +3,7 @@ import Plotly from "plotly.js-dist-min";
 import factoryModule from "react-plotly.js/factory";
 const createPlotlyComponent = factoryModule.default || factoryModule;
 import { PLAYER_COLORS, STAT_COLUMNS } from "../lib/supabase";
+// Optional overrides let Soccer (and other sports) reuse this chart.
 
 const Plot = createPlotlyComponent(Plotly);
 
@@ -75,14 +76,20 @@ const DARK_LAYOUT = {
   },
 };
 
-export default function DistributionChart({ stat, playersData, viewMode }) {
-  const label = STAT_COLUMNS[stat] || stat;
+export default function DistributionChart({
+  stat,
+  playersData,
+  viewMode,
+  statLabels = STAT_COLUMNS,
+  colors = PLAYER_COLORS,
+}) {
+  const label = statLabels[stat] || stat;
 
   const traces = useMemo(() => {
     const result = [];
 
     playersData.forEach((player, pIdx) => {
-      const color = PLAYER_COLORS[pIdx % PLAYER_COLORS.length];
+      const color = colors[pIdx % colors.length];
 
       if (viewMode === "career") {
         const values = player.data
@@ -138,7 +145,7 @@ export default function DistributionChart({ stat, playersData, viewMode }) {
     });
 
     return result;
-  }, [playersData, stat, viewMode]);
+  }, [playersData, stat, viewMode, colors]);
 
   const seasonTraces = useMemo(() => {
     if (viewMode !== "season") return null;
@@ -178,7 +185,7 @@ export default function DistributionChart({ stat, playersData, viewMode }) {
             if (values.length === 0) return null;
             const m = mean(values);
             const sd = standardDeviation(values);
-            const color = PLAYER_COLORS[pIdx % PLAYER_COLORS.length];
+            const color = colors[pIdx % colors.length];
             return (
               <div
                 key={player.name}
@@ -224,7 +231,7 @@ export default function DistributionChart({ stat, playersData, viewMode }) {
       });
 
       playersData.forEach((player, pIdx) => {
-        const color = PLAYER_COLORS[pIdx % PLAYER_COLORS.length];
+        const color = colors[pIdx % colors.length];
         const seasonGames = player.data.filter((g) => g.season === season);
         const values = seasonGames
           .map((g) => g[stat])
