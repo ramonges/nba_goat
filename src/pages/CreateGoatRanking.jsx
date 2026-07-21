@@ -12,8 +12,10 @@ import {
   fetchAllPlayersSeasonAverages,
   computeEIScoresHierarchical,
   computeEIScoresByEra,
+  computeEIScoresCustomEra,
   assignDisplayRanks,
   decadeLabel,
+  compareSeasonsChrono,
 } from "../lib/eiComputation";
 import "./DiscoverGoat.css";
 import "./CreateGoatRanking.css";
@@ -215,10 +217,13 @@ export default function CreateGoatRanking() {
   const [playerMode, setPlayerMode] = useState("all");
   const [selectedPlayers, setSelectedPlayers] = useState([]);
   const [topYears, setTopYears] = useState(TOP_YEARS_OPTIONS[0]);
-  // "all_time" = normalize vs the whole distribution.
-  // "era"      = normalize each player vs the players of his own decade(s).
+  // "all_time"   = normalize vs the whole distribution.
+  // "era"        = normalize each player vs the players of his own decade(s).
+  // "custom_era" = normalize vs players inside a user-picked season window.
   const [eiMode, setEiMode] = useState("all_time");
   const [eraDecadeFilter, setEraDecadeFilter] = useState("all");
+  const [customEraStart, setCustomEraStart] = useState(null);
+  const [customEraEnd, setCustomEraEnd] = useState(null);
 
   // ── User-built category tree ────────────────────────────────────────────
   const [userGroups, setUserGroups] = useState(initialGroupsState);
@@ -549,29 +554,90 @@ export default function CreateGoatRanking() {
     [categoryOrder, userGroups]
   );
 
+  const seasonOptions = useMemo(() => {
+    if (!seasonData?.length) return [];
+    const set = new Set();
+    for (const s of seasonData) {
+      if (s.season) set.add(s.season);
+    }
+    return [...set]
+      .sort(compareSeasonsChrono)
+      .map((s) => ({ value: s, label: s }));
+  }, [seasonData]);
+
+  // Seed custom-era season pickers once data is available.
+  useEffect(() => {
+    if (seasonOptions.length === 0) return;
+    setCustomEraStart((prev) => {
+      if (prev && seasonOptions.some((o) => o.value === prev.value)) return prev;
+      // Prefer a ~decade window ending at the latest loaded season.
+      const end = seasonOptions[seasonOptions.length - 1];
+      const targetStartIdx = Math.max(0, seasonOptions.length - 10);
+      return seasonOptions[targetStartIdx] || end;
+    });
+    setCustomEraEnd((prev) => {
+      if (prev && seasonOptions.some((o) => o.value === prev.value)) return prev;
+      return seasonOptions[seasonOptions.length - 1];
+    });
+  }, [seasonOptions]);
+
+  const runEI = useCallback(
+    (catWeights, subWeights, groups) => {
+      const minGames = playerMode === "all" ? MIN_GAMES_ALL_PLAYERS : 0;
+      if (eiMode === "era") {
+        return computeEIScoresByEra(seasonData, catWeights, subWeights, {
+          minGames,
+          categoryGroups: groups,
+          topYears: topYears.value,
+        });
+      }
+      if (eiMode === "custom_era") {
+        return computeEIScoresCustomEra(
+          seasonData,
+          catWeights,
+          subWeights,
+          customEraStart?.value,
+          customEraEnd?.value,
+          {
+            minGames,
+            categoryGroups: groups,
+            topYears: topYears.value,
+          }
+        );
+      }
+      return computeEIScoresHierarchical(
+        seasonData,
+        catWeights,
+        subWeights,
+        topYears.value,
+        { minGames, categoryGroups: groups }
+      );
+    },
+    [
+      seasonData,
+      eiMode,
+      playerMode,
+      topYears,
+      customEraStart,
+      customEraEnd,
+    ]
+  );
+
   useEffect(() => {
     if (!seasonData || seasonData.length === 0) return;
-    const minGames = playerMode === "all" ? MIN_GAMES_ALL_PLAYERS : 0;
-    const eiResults =
-      eiMode === "era"
-        ? computeEIScoresByEra(
-            seasonData,
-            normalizedCategoryWeights,
-            normalizedSubCategoryWeights,
-            {
-              minGames,
-              categoryGroups: userCategoryGroups,
-              topYears: topYears.value,
-            }
-          )
-        : computeEIScoresHierarchical(
-            seasonData,
-            normalizedCategoryWeights,
-            normalizedSubCategoryWeights,
-            topYears.value,
-            { minGames, categoryGroups: userCategoryGroups }
-          );
-    setResults(eiResults);
+    if (
+      eiMode === "custom_era" &&
+      (!customEraStart?.value || !customEraEnd?.value)
+    ) {
+      return;
+    }
+    setResults(
+      runEI(
+        normalizedCategoryWeights,
+        normalizedSubCategoryWeights,
+        userCategoryGroups
+      )
+    );
   }, [
     seasonData,
     eiMode,
@@ -580,30 +646,25 @@ export default function CreateGoatRanking() {
     normalizedSubCategoryWeights,
     topYears,
     playerMode,
+    customEraStart,
+    customEraEnd,
+    runEI,
   ]);
 
   const defaultResults = useMemo(() => {
     if (!seasonData || seasonData.length === 0) return null;
-    const minGames = playerMode === "all" ? MIN_GAMES_ALL_PLAYERS : 0;
-    return eiMode === "era"
-      ? computeEIScoresByEra(
-          seasonData,
-          DEFAULT_CATEGORY_WEIGHTS,
-          DEFAULT_SUBCATEGORY_WEIGHTS,
-          {
-            minGames,
-            categoryGroups: CATEGORY_GROUPS,
-            topYears: topYears.value,
-          }
-        )
-      : computeEIScoresHierarchical(
-          seasonData,
-          DEFAULT_CATEGORY_WEIGHTS,
-          DEFAULT_SUBCATEGORY_WEIGHTS,
-          topYears.value,
-          { minGames, categoryGroups: CATEGORY_GROUPS }
-        );
-  }, [seasonData, eiMode, topYears, playerMode]);
+    if (
+      eiMode === "custom_era" &&
+      (!customEraStart?.value || !customEraEnd?.value)
+    ) {
+      return null;
+    }
+    return runEI(
+      DEFAULT_CATEGORY_WEIGHTS,
+      DEFAULT_SUBCATEGORY_WEIGHTS,
+      CATEGORY_GROUPS
+    );
+  }, [seasonData, eiMode, topYears, playerMode, customEraStart, customEraEnd, runEI]);
 
   // Decade options for the era leaderboard filter. "All eras" = career-blended;
   // each decade = a separate ranking of that decade's performances.
@@ -653,6 +714,13 @@ export default function CreateGoatRanking() {
       totalPlayers: results?.playerRankings.length ?? 0,
     };
   }, [eiMode, eraDecadeFilter, results]);
+
+  const showTopYearsWindow =
+    eiMode === "all_time" ||
+    eiMode === "custom_era" ||
+    (eiMode === "era" && eraDecadeFilter === "all");
+
+  const categoriesStepBadge = showTopYearsWindow ? "4" : "3";
 
   // Track which sub-categories aren't in any user category so we can warn.
   const unassignedSubs = useMemo(() => {
@@ -757,8 +825,9 @@ export default function CreateGoatRanking() {
                 <span className="lab-step-badge">2</span>
                 Stat Distribution
               </label>
-              <div className="player-mode-toggle">
+              <div className="player-mode-toggle player-mode-toggle--triple">
                 <button
+                  type="button"
                   className={`mode-btn ${eiMode === "all_time" ? "mode-btn--active" : ""}`}
                   onClick={() => {
                     setEiMode("all_time");
@@ -768,6 +837,7 @@ export default function CreateGoatRanking() {
                   All-Time
                 </button>
                 <button
+                  type="button"
                   className={`mode-btn ${eiMode === "era" ? "mode-btn--active" : ""}`}
                   onClick={() => {
                     setEiMode("era");
@@ -776,11 +846,23 @@ export default function CreateGoatRanking() {
                 >
                   Era by Era
                 </button>
+                <button
+                  type="button"
+                  className={`mode-btn ${eiMode === "custom_era" ? "mode-btn--active" : ""}`}
+                  onClick={() => {
+                    setEiMode("custom_era");
+                    setEraDecadeFilter("all");
+                  }}
+                >
+                  Custom Era
+                </button>
               </div>
               <span className="control-hint">
                 {eiMode === "era"
                   ? "Every player is ranked together, but each player's score is adjusted to the distribution of the players from his own era (decade). Dominance relative to his contemporaries."
-                  : "Every player is scored against the stats of all players since the beginning of the NBA."}
+                  : eiMode === "custom_era"
+                    ? "Only seasons inside your start–end window count. EI is adjusted to the distribution of players who played in that window, then ranked for that era."
+                    : "Every player is scored against the stats of all players since the beginning of the NBA."}
               </span>
 
               {eiMode === "era" && (
@@ -815,10 +897,65 @@ export default function CreateGoatRanking() {
                   </span>
                 </div>
               )}
+
+              {eiMode === "custom_era" && (
+                <div className="lab-subfield lab-custom-era-range">
+                  <label className="lab-control-sublabel">
+                    Season window
+                  </label>
+                  <div className="lab-custom-era-selects">
+                    <div className="lab-custom-era-field">
+                      <span className="lab-custom-era-field-label">Start</span>
+                      <Select
+                        options={seasonOptions}
+                        value={customEraStart}
+                        onChange={setCustomEraStart}
+                        styles={selectStyles}
+                        isDisabled={seasonOptions.length === 0}
+                        placeholder={
+                          seasonOptions.length === 0
+                            ? "Load players first…"
+                            : "Start season…"
+                        }
+                        menuPortalTarget={
+                          typeof document !== "undefined"
+                            ? document.body
+                            : null
+                        }
+                        menuPlacement="auto"
+                      />
+                    </div>
+                    <div className="lab-custom-era-field">
+                      <span className="lab-custom-era-field-label">End</span>
+                      <Select
+                        options={seasonOptions}
+                        value={customEraEnd}
+                        onChange={setCustomEraEnd}
+                        styles={selectStyles}
+                        isDisabled={seasonOptions.length === 0}
+                        placeholder={
+                          seasonOptions.length === 0
+                            ? "Load players first…"
+                            : "End season…"
+                        }
+                        menuPortalTarget={
+                          typeof document !== "undefined"
+                            ? document.body
+                            : null
+                        }
+                        menuPlacement="auto"
+                      />
+                    </div>
+                  </div>
+                  <span className="control-hint">
+                    Players need enough games in this window to enter the board.
+                    Stats are judged only against peers from these seasons.
+                  </span>
+                </div>
+              )}
             </div>
 
-            {(eiMode === "all_time" ||
-              (eiMode === "era" && eraDecadeFilter === "all")) && (
+            {showTopYearsWindow && (
               <div className="lab-control-card lab-step-card">
                 <label className="lab-control-label">
                   <span className="lab-step-badge">3</span>
@@ -835,16 +972,17 @@ export default function CreateGoatRanking() {
                   menuPlacement="auto"
                 />
                 <span className="control-hint">
-                  Rank on a player&apos;s whole career, or on his best
-                  consecutive stretch — the lowest average EI over the chosen
-                  window of seasons.
+                  Rank on a player&apos;s whole career
+                  {eiMode === "custom_era" ? " inside the window" : ""}, or on
+                  his best consecutive stretch — the lowest average EI over the
+                  chosen window of seasons.
                 </span>
               </div>
             )}
 
             <div className="lab-control-card lab-step-card">
               <label className="lab-control-label">
-                <span className="lab-step-badge">4</span>
+                <span className="lab-step-badge">{categoriesStepBadge}</span>
                 Your Categories
               </label>
               <div className="builder-actions">
@@ -1043,7 +1181,11 @@ export default function CreateGoatRanking() {
                     ? eraDecadeFilter === "all"
                       ? "Era-relative career EI · "
                       : `${decadeLabel(Number(eraDecadeFilter))} performances · `
-                    : ""}
+                    : eiMode === "custom_era" &&
+                        customEraStart?.value &&
+                        customEraEnd?.value
+                      ? `Custom era ${customEraStart.value} → ${customEraEnd.value} · `
+                      : ""}
                   {showComparison
                     ? "Side-by-side comparison · lower EI is better · Click for more details"
                     : "Top 15 by EI · lower is better · Click for more details"}
@@ -1135,7 +1277,7 @@ function PlayerCard({
 }) {
   if (!player) return null;
 
-  const isEra = eiMode === "era";
+  const isEra = eiMode === "era" || eiMode === "custom_era";
 
   const bestSeason = player.allSeasons.reduce(
     (best, s) => (s.eiScore < best.eiScore ? s : best),

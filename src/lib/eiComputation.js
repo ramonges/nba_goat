@@ -348,6 +348,7 @@ export async function fetchPlayerSeasonAverages(playerName) {
       .from(TABLE_NAME)
       .select(cols)
       .eq("player_name", playerName)
+      .order("game_date")
       .range(offset, offset + pageSize - 1);
 
     if (error) throw error;
@@ -1646,3 +1647,219 @@ export function computeEIScoresByEra(
     eraBaselines,
   };
 }
+
+/** Sort key for "YYYY-YY" season labels (chronological by end year). */
+export function compareSeasonsChrono(a, b) {
+  const ya = seasonEndYear(a) ?? 0;
+  const yb = seasonEndYear(b) ?? 0;
+  return ya - yb;
+}
+
+/** Inclusive check: season lies between startSeason and endSeason (order-safe). */
+export function seasonInInclusiveRange(season, startSeason, endSeason) {
+  const y = seasonEndYear(season);
+  const y0 = seasonEndYear(startSeason);
+  const y1 = seasonEndYear(endSeason);
+  if (y == null || y0 == null || y1 == null) return false;
+  const lo = Math.min(y0, y1);
+  const hi = Math.max(y0, y1);
+  return y >= lo && y <= hi;
+}
+
+// Single-pool baselines for a custom season window. Per-measure values only
+// include seasons where that stat was tracked (same decade gates as By-Era).
+function computeCustomEraBaselines(seasons) {
+  const b = {};
+  for (const m of ERA_MEASURES) {
+    const vals = [];
+    for (const s of seasons) {
+      const dk = seasonDecadeKey(s.season);
+      if (!statTrackedInDecade(m, dk)) continue;
+      vals.push(s[m]);
+    }
+    b[m] = percentileBounds(vals);
+  }
+  return b;
+}
+
+function measureScoresForCustomEraSeason(season, baselines) {
+  const ms = {};
+  const dk = seasonDecadeKey(season.season);
+  for (const m of ERA_MEASURES) {
+    if (!statTrackedInDecade(m, dk)) continue;
+    const sc = normalizeMeasureScore(
+      season[m],
+      baselines[m],
+      MEASURE_DIRECTION[m]
+    );
+    if (sc != null) ms[m] = sc;
+  }
+  return ms;
+}
+
+// Legacy earned inside the custom window only, percentile-normalized against
+// players in that same window (mirrors per-decade Legacy).
+function computeWindowLegacyScores(windowSeasons) {
+  const measures = legacyMeasureNames();
+  const byPlayer = {};
+  for (const s of windowSeasons) {
+    if (!byPlayer[s.player_name]) {
+      byPlayer[s.player_name] = { player_name: s.player_name };
+      for (const m of measures) byPlayer[s.player_name][m] = 0;
+    }
+    const c = byPlayer[s.player_name];
+    for (const m of measures) {
+      const v = s[m];
+      if (v == null || isNaN(v) || !isFinite(v)) continue;
+      if (LEGACY_MAX_MEASURES.has(m)) {
+        if (v > c[m]) c[m] = v;
+      } else {
+        c[m] += v;
+      }
+    }
+  }
+  const arr = Object.values(byPlayer);
+  const bounds = computeCareerLegacyBounds(arr);
+  // Drop awards that didn't exist for any decade covered by the window.
+  const decadesInWindow = new Set();
+  for (const s of windowSeasons) {
+    const dk = seasonDecadeKey(s.season);
+    if (dk != null && dk !== PRE_1950_BUCKET) decadesInWindow.add(Number(dk));
+  }
+  for (const m of measures) {
+    const first = STAT_FIRST_DECADE[m];
+    if (first == null) continue;
+    const anyTracked = [...decadesInWindow].some((dk) => dk >= first);
+    if (!anyTracked) bounds[m] = null;
+  }
+  const out = {};
+  for (const row of arr) {
+    out[row.player_name] = computeLegacySubScoresFor(row, bounds);
+  }
+  return out;
+}
+
+/**
+ * Custom Era EI — filter to [startSeason, endSeason], build ONE reference
+ * distribution from players who logged >= ERA_DECADE_GAMES_FLOOR games in that
+ * window, score every in-window season against that pool, then rank by the
+ * same sliding-window average as All-Time (opts.topYears).
+ */
+export function computeEIScoresCustomEra(
+  seasonData,
+  categoryWeights,
+  subCategoryWeights,
+  startSeason,
+  endSeason,
+  opts = {}
+) {
+  const { minGames = 0, categoryGroups, topYears = "all" } = opts;
+  const groups = categoryGroups ?? CATEGORY_GROUPS;
+
+  if (!startSeason || !endSeason) {
+    return {
+      playerRankings: [],
+      seasonScores: [],
+      allEIScores: [],
+      measureBounds: null,
+      customEra: { startSeason, endSeason },
+    };
+  }
+
+  // Normalize order so start <= end chronologically.
+  let start = startSeason;
+  let end = endSeason;
+  if (compareSeasonsChrono(start, end) > 0) {
+    start = endSeason;
+    end = startSeason;
+  }
+
+  const gated = applyShootingEfficiencyDecadeGates(seasonData);
+  const inWindow = gated.filter((s) =>
+    seasonInInclusiveRange(s.season, start, end)
+  );
+
+  const byPlayer = new Map(); // name → { seasons[], games, minutes }
+  for (const s of inWindow) {
+    if (!byPlayer.has(s.player_name)) {
+      byPlayer.set(s.player_name, { seasons: [], games: 0, minutes: 0 });
+    }
+    const bucket = byPlayer.get(s.player_name);
+    bucket.seasons.push(s);
+    bucket.games += Number(s.games) || 0;
+    bucket.minutes += Number(s.minutes_total) || 0;
+  }
+
+  // Baseline pool = seasons of players who cleared the window games floor.
+  const baselineSeasons = [];
+  for (const bucket of byPlayer.values()) {
+    if (bucket.games < ERA_DECADE_GAMES_FLOOR) continue;
+    for (const s of bucket.seasons) baselineSeasons.push(s);
+  }
+  const baselines = computeCustomEraBaselines(baselineSeasons);
+  const windowLegacy = computeWindowLegacyScores(inWindow);
+
+  const playerRankings = [];
+  const allEIScores = [];
+  const seasonScores = [];
+
+  for (const [name, bucket] of byPlayer) {
+    if (bucket.games < ERA_DECADE_GAMES_FLOOR) continue;
+    if (minGames > 0 && bucket.games < minGames) continue;
+
+    const scoredSeasons = [];
+    for (const s of bucket.seasons) {
+      const step = eraStep2(
+        measureScoresForCustomEraSeason(s, baselines),
+        categoryWeights,
+        subCategoryWeights,
+        groups,
+        windowLegacy[name]
+      );
+      if (!step.hasScorableWeighted) continue;
+      const row = {
+        player_name: name,
+        season: s.season,
+        games: s.games,
+        eiScore: step.eiScore,
+        categoryScores: step.subCategoryScores,
+        categoryGroupScores: step.categoryGroupScores,
+      };
+      scoredSeasons.push(row);
+      seasonScores.push(row);
+    }
+    if (scoredSeasons.length === 0) continue;
+
+    const { selectedSeasons, careerEI } = pickBestSlidingWindow(
+      scoredSeasons,
+      topYears
+    );
+    allEIScores.push(careerEI);
+    playerRankings.push({
+      player_name: name,
+      careerEI,
+      peakEI: Math.min(...scoredSeasons.map((x) => x.eiScore)),
+      totalSeasons: scoredSeasons.length,
+      totalGames: bucket.games,
+      totalMinutes: bucket.minutes,
+      minutesByDecade: {},
+      primaryDecade: null,
+      selectedSeasons,
+      allSeasons: scoredSeasons,
+      customEraStart: start,
+      customEraEnd: end,
+    });
+  }
+
+  playerRankings.sort((a, b) => a.careerEI - b.careerEI);
+
+  return {
+    playerRankings,
+    seasonScores,
+    allEIScores,
+    measureBounds: null,
+    customEraBaselines: baselines,
+    customEra: { startSeason: start, endSeason: end },
+  };
+}
+

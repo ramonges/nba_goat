@@ -6,6 +6,7 @@ const NBA_NAV = [
   { path: "/stats-comparison", label: "Stats Distribution Comparison" },
   { path: "/metrics-comparison", label: "NBA Metrics Player Comparison" },
   { path: "/create-goat-ranking", label: "The NBA GOAT Lab" },
+  { path: "/goat-animation", label: "NBA GOAT Animation" },
 ];
 
 const OTHER_SPORTS = [

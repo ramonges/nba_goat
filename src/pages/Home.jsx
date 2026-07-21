@@ -106,6 +106,31 @@ export default function Home() {
               </svg>
             </span>
           </Link>
+
+          <Link to="/goat-animation" className="tool-card">
+            <div className="tool-card-header">
+              <div className="tool-indicator" />
+              <span className="tool-badge">New</span>
+            </div>
+            <h3>NBA GOAT Animation</h3>
+            <p>
+              Animate season-by-season EI paths for the top peak performers
+              (or a custom set), with live ranks and broken lines on career
+              gaps.
+            </p>
+            <span className="tool-link">
+              Open
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                <path
+                  d="M3 8h10m0 0L9 4m4 4L9 12"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </span>
+          </Link>
         </div>
       </section>
     </div>

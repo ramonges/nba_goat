@@ -4,6 +4,7 @@ import Home from "./pages/Home";
 import StatsComparison from "./pages/StatsComparison";
 import MetricsComparison from "./pages/MetricsComparison";
 import CreateGoatRanking from "./pages/CreateGoatRanking";
+import GoatAnimation from "./pages/GoatAnimation";
 import SoccerHome from "./pages/soccer/SoccerHome";
 import SoccerStatsComparison from "./pages/soccer/SoccerStatsComparison";
 import SoccerGoatRanking from "./pages/soccer/SoccerGoatRanking";
@@ -19,6 +20,7 @@ export default function App() {
         <Route path="/stats-comparison" element={<StatsComparison />} />
         <Route path="/metrics-comparison" element={<MetricsComparison />} />
         <Route path="/create-goat-ranking" element={<CreateGoatRanking />} />
+        <Route path="/goat-animation" element={<GoatAnimation />} />
         <Route path="/soccer" element={<SoccerHome />} />
         <Route
           path="/soccer/stats-comparison"

@@ -692,6 +692,41 @@
   margin-bottom: 6px;
 }
 
+.create-goat-page .player-mode-toggle--triple {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 0;
+}
+
+.create-goat-page .player-mode-toggle--triple .mode-btn {
+  font-size: 0.72rem;
+  padding: 8px 6px;
+  white-space: nowrap;
+}
+
+.lab-custom-era-selects {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.lab-custom-era-field-label {
+  display: block;
+  font-size: 0.68rem;
+  color: rgba(255, 255, 255, 0.45);
+  margin-bottom: 4px;
+}
+
+@media (max-width: 720px) {
+  .create-goat-page .player-mode-toggle--triple {
+    grid-template-columns: 1fr;
+  }
+
+  .lab-custom-era-selects {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ── Gamified decade presets (Quick Picks) ─────────────────────────────────── */
 .decade-presets {
   margin-bottom: 24px;
