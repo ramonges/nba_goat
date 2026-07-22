@@ -88,6 +88,13 @@ function compareSeasons(a, b) {
   return seasonSortKey(a).localeCompare(seasonSortKey(b));
 }
 
+// Incomplete scrape for the in-progress season — omit from the animation board.
+const ANIMATION_EXCLUDED_SEASONS = new Set(["2025-26", "2025-2026"]);
+
+function isAnimationSeason(season) {
+  return season != null && !ANIMATION_EXCLUDED_SEASONS.has(String(season));
+}
+
 function msPerFrame(speed) {
   if (speed >= 2) return 180;
   if (speed <= 0.5) return 700;
@@ -201,6 +208,7 @@ export default function GoatAnimation() {
 
       for (const p of tracked) {
         for (const s of p.allSeasons || []) {
+          if (!isAnimationSeason(s.season)) continue;
           const ei = s.eiScore;
           if (ei == null || Number.isNaN(ei) || !Number.isFinite(ei)) continue;
           byPlayer.get(p.player_name).set(s.season, ei);
@@ -230,6 +238,7 @@ export default function GoatAnimation() {
     const bySeason = new Map();
     for (const p of eiBundle.playerRankings) {
       for (const s of p.allSeasons || []) {
+        if (!isAnimationSeason(s.season)) continue;
         const ei = s.eiScore;
         if (ei == null || Number.isNaN(ei) || !Number.isFinite(ei)) continue;
         if (!bySeason.has(s.season)) bySeason.set(s.season, []);
