@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { NavLink, useNavigate, useLocation } from "react-router-dom";
+import { NavLink, useNavigate } from "react-router-dom";
 import "./Header.css";
 
 const NBA_NAV = [
@@ -9,16 +9,10 @@ const NBA_NAV = [
   { path: "/goat-animation", label: "NBA GOAT Animation" },
 ];
 
-const OTHER_SPORTS = [
-  { path: "/soccer", label: "Soccer", tag: "GOAT Lab" },
-];
-
 export default function Header() {
   const [open, setOpen] = useState(false);
   const menuRef = useRef(null);
   const navigate = useNavigate();
-  const location = useLocation();
-  const onSoccer = location.pathname.startsWith("/soccer");
 
   useEffect(() => {
     const onDoc = (e) => {
@@ -33,34 +27,13 @@ export default function Header() {
   return (
     <header className="header">
       <div className="header-inner">
-        <NavLink to={onSoccer ? "/soccer" : "/"} className="header-logo">
-          {onSoccer ? (
-            <>
-              <span className="logo-nba logo-soccer">SOCCER</span>
-              <span className="logo-goat logo-goat--soccer">GOAT</span>
-            </>
-          ) : (
-            <>
-              <span className="logo-nba">NBA</span>
-              <span className="logo-goat">GOAT</span>
-            </>
-          )}
+        <NavLink to="/" className="header-logo">
+          <span className="logo-nba">NBA</span>
+          <span className="logo-goat">GOAT</span>
         </NavLink>
 
         <nav className="header-nav">
-          {(onSoccer
-            ? [
-                {
-                  path: "/soccer/stats-comparison",
-                  label: "Stats Distribution Comparison",
-                },
-                {
-                  path: "/soccer/goat-ranking",
-                  label: "Soccer GOAT Ranking",
-                },
-              ]
-            : NBA_NAV
-          ).map((item) => (
+          {NBA_NAV.map((item) => (
             <NavLink
               key={item.path}
               to={item.path}
@@ -76,7 +49,7 @@ export default function Header() {
         <div className="header-sports" ref={menuRef}>
           <button
             type="button"
-            className={`sports-menu-btn ${open || onSoccer ? "sports-menu-btn--active" : ""}`}
+            className={`sports-menu-btn ${open ? "sports-menu-btn--active" : ""}`}
             onClick={() => setOpen((v) => !v)}
             aria-expanded={open}
             aria-haspopup="menu"
@@ -100,21 +73,14 @@ export default function Header() {
                 <span className="sports-menu-item-label">NBA</span>
                 <span className="sports-menu-item-tag">Current</span>
               </button>
-              {OTHER_SPORTS.map((s) => (
-                <button
-                  key={s.path}
-                  type="button"
-                  className={`sports-menu-item ${onSoccer ? "sports-menu-item--active" : ""}`}
-                  role="menuitem"
-                  onClick={() => {
-                    setOpen(false);
-                    navigate(s.path);
-                  }}
-                >
-                  <span className="sports-menu-item-label">{s.label}</span>
-                  <span className="sports-menu-item-tag">{s.tag}</span>
-                </button>
-              ))}
+              <div
+                className="sports-menu-item sports-menu-item--soon"
+                role="menuitem"
+                aria-disabled="true"
+              >
+                <span className="sports-menu-item-label">WNBA</span>
+                <span className="sports-menu-item-tag">Coming soon</span>
+              </div>
             </div>
           )}
         </div>

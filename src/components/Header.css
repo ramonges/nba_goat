@@ -136,6 +136,16 @@
   color: var(--text-primary);
 }
 
+.sports-menu-item--soon {
+  cursor: default;
+  opacity: 0.75;
+}
+
+.sports-menu-item--soon:hover {
+  background: transparent;
+  color: var(--text-secondary);
+}
+
 .sports-menu-item-tag {
   font-size: 0.68rem;
   font-weight: 700;
