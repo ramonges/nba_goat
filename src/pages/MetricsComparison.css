@@ -631,3 +631,9 @@
     padding: 16px;
   }
 }
+
+@media (max-width: 720px) {
+  .goat-page {
+    padding: 16px 12px 72px;
+  }
+}

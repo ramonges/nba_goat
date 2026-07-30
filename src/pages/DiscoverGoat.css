@@ -573,3 +573,78 @@
     display: none;
   }
 }
+
+@media (max-width: 720px) {
+  .goat-page {
+    padding: 16px 12px 72px;
+  }
+
+  .controls-panel {
+    padding: 16px 14px;
+    margin-bottom: 20px;
+    border-radius: 12px;
+  }
+
+  .controls-title {
+    font-size: 1.05rem;
+  }
+
+  .controls-description {
+    font-size: 0.78rem;
+    margin-bottom: 18px;
+  }
+
+  .goat-controls-layout {
+    gap: 18px;
+    margin-bottom: 18px;
+  }
+
+  .player-mode-toggle {
+    flex-wrap: wrap;
+  }
+
+  .mode-btn {
+    padding: 10px 10px;
+    font-size: 0.76rem;
+    min-height: 40px;
+  }
+
+  .result-card {
+    padding: 16px 14px;
+  }
+
+  .goat-rank-row {
+    grid-template-columns: 32px 1fr auto;
+    gap: 8px;
+    padding: 12px 10px;
+  }
+
+  .goat-rank-name {
+    font-size: 0.82rem;
+  }
+
+  .goat-rank-ei {
+    font-size: 0.88rem;
+  }
+
+  .player-card-overlay {
+    padding: 12px;
+    align-items: flex-end;
+  }
+
+  .player-card {
+    max-height: 92vh;
+    padding: 16px 14px;
+    border-radius: 14px 14px 8px 8px;
+  }
+
+  .player-card-header h3 {
+    font-size: 0.9rem;
+    padding-right: 8px;
+    line-height: 1.35;
+  }
+
+  .player-card-info-box {
+    min-width: 0;
+  }
+}

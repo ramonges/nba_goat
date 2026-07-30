@@ -717,6 +717,11 @@
   margin-bottom: 4px;
 }
 
+/* Touch-only move control (HTML5 drag/drop is unreliable on mobile) */
+.builder-sub-move {
+  display: none;
+}
+
 @media (max-width: 720px) {
   .create-goat-page .player-mode-toggle--triple {
     grid-template-columns: 1fr;
@@ -818,4 +823,155 @@
   color: color-mix(in srgb, var(--preset-color) 55%, #e8eaed);
   text-transform: uppercase;
   letter-spacing: 0.06em;
+}
+
+/* ── Mobile adaptations (must come after base rules) ───────────────────────── */
+@media (max-width: 720px) {
+  .create-goat-page.goat-page {
+    padding: 16px 12px 72px;
+  }
+
+  .create-goat-page .step-panel {
+    padding: 14px 12px;
+    border-radius: 14px;
+    gap: 12px;
+  }
+
+  .step-panel-title {
+    font-size: 0.95rem;
+  }
+
+  .create-goat-page .lab-control-card {
+    padding: 12px;
+  }
+
+  .builder-actions {
+    flex-wrap: wrap;
+  }
+
+  .builder-name-input {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .builder-btn {
+    flex: 1;
+    min-height: 40px;
+  }
+
+  .builder-grid {
+    gap: 12px;
+    padding: 0;
+  }
+
+  .builder-category {
+    padding: 12px;
+  }
+
+  .builder-category-header {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .builder-category-name,
+  .builder-category-title {
+    flex: 1 1 calc(100% - 72px);
+    min-width: 0;
+  }
+
+  .builder-sub {
+    padding: 8px 10px;
+    gap: 6px;
+  }
+
+  .decade-presets {
+    padding: 14px 12px;
+    margin-bottom: 18px;
+    border-radius: 14px;
+  }
+
+  .decade-presets-label {
+    font-size: 0.82rem;
+    margin-bottom: 10px;
+  }
+
+  .decade-presets-row {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+  }
+
+  .decade-preset {
+    padding: 12px 12px 12px 14px;
+    min-height: 64px;
+  }
+
+  .decade-preset-decade {
+    font-size: 1rem;
+  }
+
+  .decade-preset-tag {
+    font-size: 0.65rem;
+  }
+
+  .create-goat-page .analyze-btn {
+    min-height: 48px;
+    font-size: 0.95rem;
+    position: sticky;
+    bottom: 12px;
+    z-index: 20;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  }
+
+  .result-card-header-actions {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: 8px;
+  }
+
+  .compare-default-btn {
+    width: 100%;
+    white-space: normal;
+    text-align: left;
+  }
+
+  .lab-builder-hint {
+    font-size: 0.74rem;
+  }
+}
+
+/* Touch / coarse pointers: HTML5 drag-drop is unreliable */
+@media (hover: none) and (pointer: coarse), (max-width: 720px) {
+  .builder-sub {
+    cursor: default;
+  }
+
+  .builder-sub-handle {
+    display: none;
+  }
+
+  .builder-sub-move {
+    display: block;
+    width: 100%;
+    margin-top: 2px;
+    background: rgba(0, 0, 0, 0.28);
+    border: 1px solid var(--cat-border);
+    border-radius: 6px;
+    color: var(--text-secondary);
+    font-size: 0.7rem;
+    padding: 7px 8px;
+    outline: none;
+    -webkit-appearance: none;
+    appearance: none;
+    background-image: linear-gradient(45deg, transparent 50%, rgba(255, 255, 255, 0.35) 50%),
+      linear-gradient(135deg, rgba(255, 255, 255, 0.35) 50%, transparent 50%);
+    background-position:
+      calc(100% - 14px) calc(50% - 2px),
+      calc(100% - 9px) calc(50% - 2px);
+    background-size: 5px 5px, 5px 5px;
+    background-repeat: no-repeat;
+  }
+
+  .builder-sub-move:focus {
+    border-color: var(--cat-color);
+  }
 }

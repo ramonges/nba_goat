@@ -1028,9 +1028,9 @@ export default function CreateGoatRanking() {
             <div className="lab-builder-header">
               <h3 className="lab-builder-title">Category Builder</h3>
               <p className="lab-builder-hint">
-                Drag a sub-category card onto another category to move it.
-                Category weights sum to 1 · sub-categories sum to 1 within
-                each category.
+                Drag a sub-category onto another category to move it, or use
+                Move to… on mobile. Category weights sum to 1 · sub-categories
+                sum to 1 within each category.
               </p>
             </div>
 
@@ -1122,6 +1122,30 @@ export default function CreateGoatRanking() {
                                 %
                               </span>
                             </div>
+                            {categoryOrder.length > 1 && (
+                              <select
+                                className="builder-sub-move"
+                                value=""
+                                aria-label={`Move ${sub} to another category`}
+                                onChange={(e) => {
+                                  const toCat = e.target.value;
+                                  if (toCat && toCat !== cat) {
+                                    moveSubCategory(sub, cat, toCat);
+                                  }
+                                }}
+                              >
+                                <option value="" disabled>
+                                  Move to…
+                                </option>
+                                {categoryOrder
+                                  .filter((c) => c !== cat)
+                                  .map((c) => (
+                                    <option key={c} value={c}>
+                                      {c}
+                                    </option>
+                                  ))}
+                              </select>
+                            )}
                             <input
                               type="range"
                               min="0"

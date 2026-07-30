@@ -176,3 +176,31 @@
   color: var(--text-primary);
   background: var(--bg-elevated);
 }
+
+@media (max-width: 720px) {
+  .header-inner {
+    padding: 0 12px;
+    gap: 10px;
+  }
+
+  .header-nav {
+    gap: 0;
+    -webkit-overflow-scrolling: touch;
+    mask-image: linear-gradient(90deg, #000 85%, transparent);
+  }
+
+  .nav-link {
+    font-size: 0.72rem;
+    padding: 6px 10px;
+  }
+
+  .sports-menu-btn {
+    padding: 6px 10px;
+    font-size: 0.72rem;
+  }
+
+  .logo-nba,
+  .logo-goat {
+    font-size: 0.95rem;
+  }
+}
