@@ -746,9 +746,8 @@ function computeSubCategoryScores(s, measureBounds) {
       const span = maxVal - minVal;
 
       // Sigmoid normalization
-      let mHat =
+      const mHat =
         SIGMOID_X_C + ((SIGMOID_X_D - SIGMOID_X_C) / span) * (val - minVal);
-      mHat = Math.max(-50, Math.min(50, mHat)); // clip
       const mTilde = 1 / (1 + Math.exp(-mHat)); // sigmoid → [0,1]
 
       // "higher is better" → score = 1 - mTilde (top player → low score)
@@ -864,9 +863,8 @@ function computeLegacySubScoresFor(careerRow, careerBounds) {
       if (!bounds) continue;
       const { minVal, maxVal } = bounds;
       const span = maxVal - minVal;
-      let mHat =
+      const mHat =
         SIGMOID_X_C + ((SIGMOID_X_D - SIGMOID_X_C) / span) * (val - minVal);
-      mHat = Math.max(-50, Math.min(50, mHat));
       const mTilde = 1 / (1 + Math.exp(-mHat));
       const score = cat.direction === "higher" ? 1 - mTilde : mTilde;
       transformed.push(score);
@@ -1321,9 +1319,8 @@ function normalizeMeasureScore(val, bounds, direction) {
   if (val == null || isNaN(val) || !isFinite(val) || !bounds) return null;
   const { minVal, maxVal } = bounds;
   const span = maxVal - minVal;
-  let mHat =
+  const mHat =
     SIGMOID_X_C + ((SIGMOID_X_D - SIGMOID_X_C) / span) * (val - minVal);
-  mHat = Math.max(-50, Math.min(50, mHat));
   const mTilde = 1 / (1 + Math.exp(-mHat));
   return direction === "higher" ? 1 - mTilde : mTilde;
 }
