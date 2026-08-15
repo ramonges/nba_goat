@@ -86,7 +86,7 @@ const selectStyles = {
 export default function DiscoverGoat() {
   const [playerMode, setPlayerMode] = useState("all");
   const [selectedPlayers, setSelectedPlayers] = useState([]);
-  // Top-level category weights (Volume, Rebounding, ...). Normalized to sum to 1.
+  // Top-level category weights (Production, Rebounding, ...). Normalized to sum to 1.
   const [categoryWeights, setCategoryWeights] = useState(() => ({
     ...DEFAULT_CATEGORY_WEIGHTS,
   }));

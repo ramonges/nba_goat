@@ -755,7 +755,7 @@ function LeagueDistributionChart({ seasonScores, topYears }) {
 export default function MetricsComparison() {
   const [playerMode, setPlayerMode] = useState("all");
   const [selectedPlayers, setSelectedPlayers] = useState([]);
-  // Top-level category weights (Volume, Rebounding, ...). Constrained to sum to 1
+  // Top-level category weights (Production, Rebounding, ...). Constrained to sum to 1
   // by normalization at compute time; raw slider values are kept here.
   const [categoryWeights, setCategoryWeights] = useState(() => ({
     ...DEFAULT_CATEGORY_WEIGHTS,

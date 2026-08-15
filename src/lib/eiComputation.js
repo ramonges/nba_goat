@@ -4,7 +4,7 @@ import { supabase, TABLE_NAME } from "./supabase";
  * EI Framework — hierarchical (categories → sub-categories → measures)
  *
  * Two-level weighting tree (see whiteboard):
- *   - 9 top-level CATEGORIES (Volume, Rebounding, ...). Their weights sum to 1.
+ *   - Top-level CATEGORIES (Production, Rebounding, ...). Their weights sum to 1.
  *   - Each category holds several SUB-CATEGORIES (e.g. Scoring Production).
  *     Sub-category weights are relative within their category.
  *   - Each sub-category holds raw measures.
@@ -18,7 +18,7 @@ import { supabase, TABLE_NAME } from "./supabase";
 
 // Maps each top-level CATEGORY to its SUB-CATEGORIES.
 export const CATEGORY_GROUPS = {
-  Volume: [
+  Production: [
     "Scoring Production",
     "Minutes Load",
     "Plus-Minus Impact",
@@ -1031,7 +1031,7 @@ export function computeEIScores(seasonData, weights, topYears, opts = {}) {
  *   sub-category scores → (sub-category weights) → category scores
  *                       → (category weights, sum to 1) → EI
  *
- * @param {object} categoryWeights    keyed by category (Volume, Rebounding, ...)
+ * @param {object} categoryWeights    keyed by category (Production, Rebounding, ...)
  * @param {object} subCategoryWeights keyed by sub-category (Scoring Production, ...)
  */
 export function computeEIScoresHierarchical(
